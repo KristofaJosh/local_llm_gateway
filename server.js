@@ -158,9 +158,24 @@ async function startServer() {
           // Attempt to pretty-print if it's JSON
           formattedResponse = JSON.stringify(JSON.parse(responseBody), null, 2);
         } catch (e) {
-          // Fallback to original or sliced string if not JSON
-          if (responseBody.length > 1000) {
-            formattedResponse = `${responseBody.slice(0, 1000)}...`;
+          // If it's not a single JSON, try to format as multiple JSON objects (for SSE/NDJSON)
+          try {
+            formattedResponse = responseBody.split('\n')
+              .map(line => {
+                const trimmed = line.trim();
+                if (!trimmed) return line;
+                // Handle SSE format "data: {...}"
+                const sseMatch = trimmed.match(/^data:\s*(.*)$/);
+                const jsonPart = sseMatch ? sseMatch[1] : trimmed;
+                try {
+                  const parsed = JSON.parse(jsonPart);
+                  return (sseMatch ? 'data: ' : '') + JSON.stringify(parsed, null, 2);
+                } catch (e2) {
+                  return line;
+                }
+              }).join('\n');
+          } catch (e3) {
+            // Fallback to original
           }
         }
 

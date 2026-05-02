@@ -274,6 +274,27 @@
                     const parsed = JSON.parse(data);
                     return renderRecursive(parsed);
                 } catch (e) {
+                    // If it's multi-line, it might be SSE or NDJSON
+                    if (data.includes('\n')) {
+                        return data.split('\n').map(line => {
+                            const trimmed = line.trim();
+                            if (!trimmed) return '<br>';
+                            // Handle SSE prefix
+                            const sseMatch = trimmed.match(/^data:\s*(.*)$/);
+                            if (sseMatch) {
+                                try {
+                                    const parsed = JSON.parse(sseMatch[1]);
+                                    return `<div style="margin-bottom:0.5rem"><span class="json-key">data:</span> ${renderRecursive(parsed)}</div>`;
+                                } catch (e2) {}
+                            }
+                            // Try parsing the whole line as JSON
+                            try {
+                                const parsed = JSON.parse(trimmed);
+                                return `<div style="margin-bottom:0.5rem">${renderRecursive(parsed)}</div>`;
+                            } catch (e2) {}
+                            return `<div class="json-string">${line}</div>`;
+                        }).join('');
+                    }
                     return `<span class="json-string">"${data}"</span>`;
                 }
             }
