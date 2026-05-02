@@ -231,8 +231,15 @@ async function startServer() {
       return reply.status(404).send({ error: 'Log not found' });
     }
 
-    // Merge them for a unified view
-    const log = entries.reduce((acc, curr) => ({ ...acc, ...curr }), {});
+    // Merge them for a unified view, skipping nulls to preserve data across entries (e.g. request body)
+    const log = entries.reduce((acc, curr) => {
+      for (const [key, value] of Object.entries(curr)) {
+        if (value !== null && value !== undefined) {
+          acc[key] = value;
+        }
+      }
+      return acc;
+    }, {});
     
     return reply.view('log_detail.hbs', { log, gatewayName: CONFIG.GATEWAY_NAME });
   });

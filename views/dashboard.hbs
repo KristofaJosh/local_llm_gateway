@@ -411,29 +411,49 @@
 
 
 
+        const countedRequests = new Set();
+        const countedResponses = new Set();
+
         function createLogEntry(log) {
-            const entry = document.createElement('div');
-            entry.className = 'log-entry';
-            const isResponse = log.type === 'response';
-            const isError = log.statusCode >= 400;
+            let entry = document.getElementById(`log-${log.id}`);
+            const isNew = !entry;
+            const wasExpanded = !isNew && entry.classList.contains('expanded');
+            
+            if (isNew) {
+                entry = document.createElement('div');
+                entry.id = `log-${log.id}`;
+                entry.className = 'log-entry';
+                entry._log = {};
+            }
+
+            // Merge log data, skipping nulls to preserve existing data (like request body)
+            for (const [key, value] of Object.entries(log)) {
+                if (value !== null && value !== undefined) {
+                    entry._log[key] = value;
+                }
+            }
+            
+            const currentLog = entry._log;
+            const isResponse = currentLog.statusCode !== undefined || currentLog.type === 'response';
+            const isError = currentLog.statusCode >= 400;
             
             const badgeClass = isResponse ? (isError ? 'badge-error' : 'badge-response') : 'badge-request';
             const badgeText = isResponse ? 'Response' : 'Request';
-            const deviceName = getFriendlyName(log.userAgent, log.id);
-            const headerLabel = deviceName || `[${log.id}]`;
+            const deviceName = getFriendlyName(currentLog.userAgent, currentLog.id);
+            const headerLabel = deviceName || `[${currentLog.id}]`;
 
             entry.innerHTML = `
                 <div class="log-header" onclick="this.parentElement.classList.toggle('expanded')">
                     <div class="log-info">
                         <span class="badge ${badgeClass}">${badgeText}</span>
                         <span class="device-tag">${headerLabel}</span>
-                        <span class="method">${log.method}</span>
-                        <span class="path">${log.path}</span>
+                        <span class="method">${currentLog.method}</span>
+                        <span class="path">${currentLog.path}</span>
                     </div>
                     <div class="time" style="display: flex; align-items: center; gap: 0.75rem;">
-                        ${isResponse ? `<span>${formatDuration(log.duration_ms)}</span> • ` : ''}
-                        ${new Date(log.timestamp).toLocaleTimeString()}
-                        <a href="/dashboard/${log.id}" onclick="event.stopPropagation()" class="btn-detail">
+                        ${isResponse && currentLog.duration_ms ? `<span>${formatDuration(currentLog.duration_ms)}</span> • ` : ''}
+                        ${new Date(currentLog.timestamp).toLocaleTimeString()}
+                        <a href="/dashboard/${currentLog.id}" onclick="event.stopPropagation()" class="btn-detail">
                             Details
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
                         </a>
@@ -441,60 +461,82 @@
                 </div>
                 <div class="log-details">
                     <div class="details-grid">
-                        ${log.model ? `
+                        ${currentLog.model ? `
                         <div class="detail-item">
                             <label>Model</label>
-                            <div class="detail-value">${log.model}</div>
+                            <div class="detail-value">${currentLog.model}</div>
                         </div>` : ''}
-                        ${log.userAgent ? `
+                        ${currentLog.userAgent ? `
                         <div class="detail-item">
                             <label>Device / App</label>
-                            <div class="detail-value">${log.userAgent}</div>
+                            <div class="detail-value">${currentLog.userAgent}</div>
                         </div>` : ''}
-                        ${log.input_tokens ? `
+                        ${currentLog.input_tokens ? `
                         <div class="detail-item">
                             <label>Input Tokens</label>
-                            <div class="detail-value">${log.input_tokens}</div>
+                            <div class="detail-value">${currentLog.input_tokens}</div>
                         </div>` : ''}
-                        ${log.output_tokens ? `
+                        ${currentLog.output_tokens ? `
                         <div class="detail-item">
                             <label>Output Tokens</label>
-                            <div class="detail-value">${log.output_tokens}</div>
+                            <div class="detail-value">${currentLog.output_tokens}</div>
                         </div>` : ''}
-                        ${log.statusCode ? `
+                        ${currentLog.statusCode ? `
                         <div class="detail-item">
                             <label>Status</label>
-                            <div class="detail-value ${isError ? 'badge-error' : ''}" style="display:inline-block">${log.statusCode}</div>
+                            <div class="detail-value ${isError ? 'badge-error' : ''}" style="display:inline-block">${currentLog.statusCode}</div>
                         </div>` : ''}
                     </div>
                     <div style="margin-top: 1.5rem;">
                         <label style="display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; margin-bottom: 0.5rem;">
-                            ${isResponse ? 'Response Data' : 'Request Body'}
+                            Request Body
                         </label>
-                        <div class="detail-value" id="data-${log.id}-${log.type}"></div>
+                        <div class="detail-value" id="request-data-${currentLog.id}"></div>
                     </div>
+                    ${currentLog.response ? `
+                    <div style="margin-top: 1.5rem;">
+                        <label style="display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; margin-bottom: 0.5rem;">
+                            Response Data
+                        </label>
+                        <div class="detail-value" id="response-data-${currentLog.id}"></div>
+                    </div>` : ''}
                 </div>
             `;
 
-            // Render raw data
-            const dataContainer = entry.querySelector(`#data-${log.id}-${log.type}`);
-            const rawData = log.body || log.response || 'No data';
-            dataContainer.textContent = typeof rawData === 'object' ? JSON.stringify(rawData, null, 2) : rawData;
+            if (wasExpanded) entry.classList.add('expanded');
 
-            if (logContainer.firstChild) {
+            // Render raw data
+            const requestContainer = entry.querySelector(`#request-data-${currentLog.id}`);
+            const requestBody = currentLog.body || 'No data';
+            requestContainer.textContent = typeof requestBody === 'object' ? JSON.stringify(requestBody, null, 2) : requestBody;
+
+            if (currentLog.response) {
+                const responseContainer = entry.querySelector(`#response-data-${currentLog.id}`);
+                responseContainer.textContent = typeof currentLog.response === 'object' ? JSON.stringify(currentLog.response, null, 2) : currentLog.response;
+            }
+
+            if (isNew) {
+                if (logContainer.firstChild) {
+                    logContainer.insertBefore(entry, logContainer.firstChild);
+                } else {
+                    logContainer.appendChild(entry);
+                }
+            } else if (log.type === 'response') {
+                // Move to top when response arrives
                 logContainer.insertBefore(entry, logContainer.firstChild);
-            } else {
-                logContainer.appendChild(entry);
             }
 
             // Update stats
-            if (log.type === 'request') {
+            if ((currentLog.type === 'request' || currentLog.body) && !countedRequests.has(currentLog.id)) {
                 stats.requests++;
-                if (log.input_tokens) stats.inTokens += log.input_tokens;
-            } else if (log.type === 'response') {
+                countedRequests.add(currentLog.id);
+                if (currentLog.input_tokens) stats.inTokens += currentLog.input_tokens;
+            }
+            if ((currentLog.type === 'response' || currentLog.statusCode) && !countedResponses.has(currentLog.id)) {
                 stats.responses++;
-                if (log.duration_ms) stats.totalLatency += log.duration_ms;
-                if (log.output_tokens) stats.outTokens += log.output_tokens;
+                countedResponses.add(currentLog.id);
+                if (currentLog.duration_ms) stats.totalLatency += currentLog.duration_ms;
+                if (currentLog.output_tokens) stats.outTokens += currentLog.output_tokens;
             }
             updateStats();
 
