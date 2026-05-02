@@ -213,6 +213,57 @@
             border-color: var(--accent);
         }
 
+        /* Collapsible sections for Request/Response data */
+        .collapsible-section {
+            margin-top: 1rem;
+        }
+
+        .collapsible-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            padding: 0.5rem 0.75rem;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            margin-bottom: 0.75rem;
+            transition: all 0.2s;
+            user-select: none;
+        }
+
+        .collapsible-header:hover {
+            background: rgba(255, 255, 255, 0.06);
+            border-color: var(--accent);
+        }
+
+        .collapsible-header .section-title {
+            margin-bottom: 0;
+            cursor: pointer;
+            pointer-events: none;
+            flex: 1;
+        }
+
+        .collapsible-header .section-title::after {
+            display: none; /* Hide the line in collapsible header */
+        }
+
+        .collapsible-icon {
+            color: var(--text-muted);
+            transition: transform 0.2s ease;
+            display: flex;
+            align-items: center;
+            margin-left: 1rem;
+        }
+
+        .collapsible-section.collapsed .collapsible-icon {
+            transform: rotate(-90deg);
+        }
+
+        .collapsible-section.collapsed .data-viewer {
+            display: none;
+        }
+
         @media (max-width: 1100px) {
             main { 
                 grid-template-columns: 1fr; 
@@ -308,20 +359,30 @@
 
         <div class="content">
             <div class="card">
-                <div class="section-title">
-                    Request Body
-                    <button class="wrap-toggle" onclick="toggleWrap(this, 'request-data')">Wrap Text</button>
+                <div class="collapsible-section" id="req-section">
+                    <div class="collapsible-header" onclick="this.parentElement.classList.toggle('collapsed')">
+                        <div class="section-title">Request Body</div>
+                        <button class="wrap-toggle" onclick="event.stopPropagation(); toggleWrap(this, 'request-data')">Wrap Text</button>
+                        <span class="collapsible-icon">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        </span>
+                    </div>
+                    <div id="request-data" class="data-viewer"></div>
                 </div>
-                <div id="request-data" class="data-viewer"></div>
             </div>
 
             {{#if log.response}}
             <div class="card">
-                <div class="section-title">
-                    Response Data
-                    <button class="wrap-toggle" onclick="toggleWrap(this, 'response-data')">Wrap Text</button>
+                <div class="collapsible-section" id="res-section">
+                    <div class="collapsible-header" onclick="this.parentElement.classList.toggle('collapsed')">
+                        <div class="section-title">Response Data</div>
+                        <button class="wrap-toggle" onclick="event.stopPropagation(); toggleWrap(this, 'response-data')">Wrap Text</button>
+                        <span class="collapsible-icon">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        </span>
+                    </div>
+                    <div id="response-data" class="data-viewer"></div>
                 </div>
-                <div id="response-data" class="data-viewer"></div>
             </div>
             {{/if}}
         </div>

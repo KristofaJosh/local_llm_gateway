@@ -319,6 +319,55 @@
         .btn-detail svg {
             flex-shrink: 0;
         }
+
+        /* Collapsible sections for Request/Response data */
+        .collapsible-section {
+            margin-top: 1.25rem;
+        }
+
+        .collapsible-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            padding: 0.4rem 0.75rem;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            margin-bottom: 0.5rem;
+            transition: all 0.2s;
+            user-select: none;
+        }
+
+        .collapsible-header:hover {
+            background: rgba(255, 255, 255, 0.06);
+            border-color: var(--accent);
+        }
+
+        .collapsible-header label {
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            margin-bottom: 0;
+            cursor: pointer;
+            pointer-events: none;
+        }
+
+        .collapsible-icon {
+            color: var(--text-muted);
+            transition: transform 0.2s ease;
+            display: flex;
+            align-items: center;
+        }
+
+        .collapsible-section.collapsed .collapsible-icon {
+            transform: rotate(-90deg);
+        }
+
+        .collapsible-section.collapsed .detail-value {
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -419,6 +468,11 @@
             const isNew = !entry;
             const wasExpanded = !isNew && entry.classList.contains('expanded');
             
+            // Temporary variable to calculate collapsed state before re-render
+            const currentId = log.id;
+            const wasReqCollapsed = !isNew && entry.querySelector(`#req-section-${currentId}`)?.classList.contains('collapsed');
+            const wasResCollapsed = !isNew && entry.querySelector(`#res-section-${currentId}`)?.classList.contains('collapsed');
+            
             if (isNew) {
                 entry = document.createElement('div');
                 entry.id = `log-${log.id}`;
@@ -487,17 +541,23 @@
                             <div class="detail-value ${isError ? 'badge-error' : ''}" style="display:inline-block">${currentLog.statusCode}</div>
                         </div>` : ''}
                     </div>
-                    <div style="margin-top: 1.5rem;">
-                        <label style="display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; margin-bottom: 0.5rem;">
-                            Request Body
-                        </label>
+                    <div class="collapsible-section ${wasReqCollapsed ? 'collapsed' : ''}" id="req-section-${currentLog.id}">
+                        <div class="collapsible-header" onclick="this.parentElement.classList.toggle('collapsed')">
+                            <label>Request Body</label>
+                            <span class="collapsible-icon">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                            </span>
+                        </div>
                         <div class="detail-value" id="request-data-${currentLog.id}"></div>
                     </div>
                     ${currentLog.response ? `
-                    <div style="margin-top: 1.5rem;">
-                        <label style="display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; margin-bottom: 0.5rem;">
-                            Response Data
-                        </label>
+                    <div class="collapsible-section ${wasResCollapsed ? 'collapsed' : ''}" id="res-section-${currentLog.id}">
+                        <div class="collapsible-header" onclick="this.parentElement.classList.toggle('collapsed')">
+                            <label>Response Data</label>
+                            <span class="collapsible-icon">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                            </span>
+                        </div>
                         <div class="detail-value" id="response-data-${currentLog.id}"></div>
                     </div>` : ''}
                 </div>
