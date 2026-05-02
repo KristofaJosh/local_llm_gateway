@@ -292,6 +292,33 @@
             background: var(--error);
             color: white;
         }
+
+        .btn-detail {
+            background: rgba(56, 189, 248, 0.1);
+            color: var(--accent);
+            border: 1px solid rgba(56, 189, 248, 0.2);
+            padding: 0.3rem 0.6rem;
+            border-radius: 6px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            line-height: 1;
+            white-space: nowrap;
+            text-decoration: none;
+        }
+
+        .btn-detail:hover {
+            background: var(--accent);
+            color: var(--bg);
+        }
+
+        .btn-detail svg {
+            flex-shrink: 0;
+        }
     </style>
 </head>
 <body>
@@ -403,11 +430,12 @@
                         <span class="method">${log.method}</span>
                         <span class="path">${log.path}</span>
                     </div>
-                    <div class="time" style="display: flex; align-items: center; gap: 0.5rem;">
+                    <div class="time" style="display: flex; align-items: center; gap: 0.75rem;">
                         ${isResponse ? `<span>${formatDuration(log.duration_ms)}</span> • ` : ''}
                         ${new Date(log.timestamp).toLocaleTimeString()}
-                        <a href="/dashboard/${log.id}" target="_blank" onclick="event.stopPropagation()" style="color: var(--accent); display: flex;">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                        <a href="/dashboard/${log.id}" onclick="event.stopPropagation()" class="btn-detail">
+                            Details
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
                         </a>
                     </div>
                 </div>
