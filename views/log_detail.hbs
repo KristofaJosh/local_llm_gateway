@@ -86,6 +86,7 @@
             display: flex;
             flex-direction: column;
             gap: 2rem;
+            min-width: 0; /* Critical for grid item overflow */
         }
 
         .card {
@@ -94,6 +95,8 @@
             border-radius: 12px;
             padding: 1.5rem;
             box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+            max-width: 100%;
+            overflow: hidden;
         }
 
         .section-title {
@@ -161,7 +164,7 @@
             display: block;
         }
         .json-key { color: var(--accent); font-weight: 600; margin-right: 0.5rem; }
-        .json-string { color: #aff5b4; white-space: pre-wrap; word-break: break-all; }
+        .json-string { color: #aff5b4; }
         .json-number { color: #f8e3a1; }
         .json-boolean { color: #d8b4fe; }
         .json-null { color: var(--text-muted); font-style: italic; }
@@ -174,6 +177,40 @@
             border-radius: 8px;
             border: 1px solid var(--border);
             width: 100%;
+            max-width: 100%;
+            transition: all 0.2s;
+        }
+
+        .data-viewer.wrapped .json-tree,
+        .data-viewer.wrapped .json-string {
+            white-space: pre-wrap !important;
+            word-break: break-all;
+        }
+
+        .wrap-toggle {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            padding: 0.2rem 0.6rem;
+            border-radius: 4px;
+            font-size: 0.65rem;
+            font-weight: 600;
+            cursor: pointer;
+            text-transform: uppercase;
+            transition: all 0.2s;
+            margin-left: auto;
+        }
+
+        .wrap-toggle:hover {
+            background: var(--accent);
+            color: white;
+            border-color: var(--accent);
+        }
+
+        .wrap-toggle.active {
+            background: rgba(88, 166, 255, 0.15);
+            color: var(--accent);
+            border-color: var(--accent);
         }
 
         @media (max-width: 1100px) {
@@ -271,13 +308,19 @@
 
         <div class="content">
             <div class="card">
-                <div class="section-title">Request Body</div>
+                <div class="section-title">
+                    Request Body
+                    <button class="wrap-toggle" onclick="toggleWrap(this, 'request-data')">Wrap Text</button>
+                </div>
                 <div id="request-data" class="data-viewer"></div>
             </div>
 
             {{#if log.response}}
             <div class="card">
-                <div class="section-title">Response Data</div>
+                <div class="section-title">
+                    Response Data
+                    <button class="wrap-toggle" onclick="toggleWrap(this, 'response-data')">Wrap Text</button>
+                </div>
                 <div id="response-data" class="data-viewer"></div>
             </div>
             {{/if}}
@@ -361,6 +404,13 @@
             }
             
             return `<span class="json-string">${String(data)}</span>`;
+        }
+
+        function toggleWrap(btn, targetId) {
+            const el = document.getElementById(targetId);
+            const isWrapped = el.classList.toggle('wrapped');
+            btn.classList.toggle('active');
+            btn.textContent = isWrapped ? 'Unwrap Text' : 'Wrap Text';
         }
 
         document.getElementById('duration').textContent = formatDuration(log.duration_ms);
