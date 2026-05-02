@@ -265,7 +265,7 @@ async function startServer() {
     ollama.warmup().catch(() => {});
 
     await app.listen({ port: CONFIG.GATEWAY_PORT, host: '0.0.0.0' });
-    console.log(`\x1b[32m[SERVER]\x1b[0m Sharing Ollama on port ${CONFIG.GATEWAY_PORT}`);
+    // console.log(`\x1b[32m[SERVER]\x1b[0m Sharing Ollama on port ${CONFIG.GATEWAY_PORT}`);
   } catch (err) {
     trafficLogger.error('Failed to start server', err);
     process.exit(1);
