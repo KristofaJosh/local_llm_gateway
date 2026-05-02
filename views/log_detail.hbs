@@ -21,8 +21,12 @@
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        ::-webkit-scrollbar { display: none; }
-        * { scrollbar-width: none; -ms-overflow-style: none; }
+        
+        /* Custom scrollbar for better visibility while staying sleek */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: var(--bg); }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
         body {
             background-color: var(--bg);
@@ -36,7 +40,7 @@
         }
 
         header {
-            padding: 1rem 2rem;
+            padding: 1rem 1.5rem;
             background: rgba(13, 17, 23, 0.9);
             border-bottom: 1px solid var(--border);
             backdrop-filter: blur(8px);
@@ -46,6 +50,8 @@
             position: sticky;
             top: 0;
             z-index: 100;
+            flex-wrap: wrap;
+            gap: 1rem;
         }
 
         .back-btn {
@@ -61,13 +67,13 @@
         .back-btn:hover { color: var(--accent); }
 
         main {
-            padding: 2rem;
+            padding: 1.5rem;
             max-width: 1400px;
             margin: 0 auto;
             width: 100%;
             display: grid;
-            grid-template-columns: 350px 1fr;
-            gap: 2rem;
+            grid-template-columns: 320px 1fr;
+            gap: 1.5rem;
         }
 
         .sidebar {
@@ -141,7 +147,7 @@
         .badge-error { background: rgba(218, 54, 51, 0.15); color: var(--error); }
 
         .json-tree { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text); }
-        .json-item { margin-left: 1.25rem; border-left: 1px solid var(--border); padding-left: 1rem; margin-top: 0.4rem; }
+        .json-item { margin-left: 0.8rem; border-left: 1px solid var(--border); padding-left: 0.6rem; margin-top: 0.1rem; }
         .json-key { color: var(--accent); font-weight: 600; margin-right: 0.5rem; }
         .json-string { color: #7ee787; }
         .json-number { color: #f2cc60; }
@@ -150,34 +156,42 @@
 
         .data-viewer {
             max-height: 800px;
-            overflow-y: auto;
+            overflow: auto; /* Handles both x and y */
             background: #0d1117;
-            padding: 1rem;
+            padding: 0.75rem;
             border-radius: 8px;
             border: 1px solid var(--border);
+            white-space: pre; /* Ensure no wrapping to allow X scrolling */
         }
 
-        @media (max-width: 1000px) {
+        @media (max-width: 1100px) {
             main { 
                 grid-template-columns: 1fr; 
-                padding: 0.75rem;
+                padding: 1rem;
                 gap: 1.5rem;
-                width: 100%;
-                box-sizing: border-box;
             }
             header { padding: 1rem; }
+        }
+
+        @media (max-width: 768px) {
             .json-item { 
-                margin-left: 0.75rem; 
-                padding-left: 0.75rem; 
+                margin-left: 0.5rem; 
+                padding-left: 0.4rem; 
             }
-            .data-viewer { padding: 0.75rem; }
+            .data-viewer { padding: 0.5rem; }
             .sidebar, .content { width: 100%; }
         }
 
         @media (max-width: 480px) {
-            header { padding: 0.75rem 1rem; flex-direction: column; align-items: flex-start; gap: 0.5rem; }
-            .meta-value { font-size: 0.8rem; word-break: break-all; }
-            .card { padding: 1rem; width: 100%; box-sizing: border-box; }
+            header { 
+                padding: 1rem; 
+                flex-direction: column; 
+                align-items: flex-start; 
+                gap: 0.75rem; 
+            }
+            .meta-value { font-size: 0.85rem; }
+            .card { padding: 1rem; }
+            main { padding: 0.75rem; gap: 1rem; }
         }
     </style>
 </head>
@@ -274,23 +288,20 @@
                     const parsed = JSON.parse(data);
                     return renderRecursive(parsed);
                 } catch (e) {
-                    // If it's multi-line, it might be SSE or NDJSON
                     if (data.includes('\n')) {
                         return data.split('\n').map(line => {
                             const trimmed = line.trim();
                             if (!trimmed) return '<br>';
-                            // Handle SSE prefix
                             const sseMatch = trimmed.match(/^data:\s*(.*)$/);
                             if (sseMatch) {
                                 try {
                                     const parsed = JSON.parse(sseMatch[1]);
-                                    return `<div style="margin-bottom:0.5rem"><span class="json-key">data:</span> ${renderRecursive(parsed)}</div>`;
+                                    return `<div style="margin-bottom:0.2rem"><span class="json-key">data:</span>${renderRecursive(parsed)}</div>`;
                                 } catch (e2) {}
                             }
-                            // Try parsing the whole line as JSON
                             try {
                                 const parsed = JSON.parse(trimmed);
-                                return `<div style="margin-bottom:0.5rem">${renderRecursive(parsed)}</div>`;
+                                return `<div style="margin-bottom:0.2rem">${renderRecursive(parsed)}</div>`;
                             } catch (e2) {}
                             return `<div class="json-string">${line}</div>`;
                         }).join('');
@@ -309,10 +320,7 @@
             if (typeof data === 'object') {
                 const keys = Object.keys(data);
                 if (keys.length === 0) return '{}';
-                return `<div class="json-tree">{${keys.map(key => `
-                    <div class="json-item">
-                        <span class="json-key">${key}:</span>${renderRecursive(data[key])}
-                    </div>`).join('')}}</div>`;
+                return `<div class="json-tree">{${keys.map(key => `<div class="json-item"><span class="json-key">${key}:</span>${renderRecursive(data[key])}</div>`).join('')}}</div>`;
             }
             
             return String(data);
