@@ -146,22 +146,34 @@
         .badge-response { background: rgba(35, 134, 54, 0.15); color: var(--response); }
         .badge-error { background: rgba(218, 54, 51, 0.15); color: var(--error); }
 
-        .json-tree { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text); }
-        .json-item { margin-left: 0.8rem; border-left: 1px solid var(--border); padding-left: 0.6rem; margin-top: 0.1rem; }
+        .json-tree { 
+            font-family: 'JetBrains Mono', monospace; 
+            font-size: 0.85rem; 
+            color: var(--text); 
+            display: block;
+            white-space: pre;
+        }
+        .json-item { 
+            margin-left: 1rem; 
+            border-left: 1px solid var(--border); 
+            padding-left: 0.75rem; 
+            margin-top: 0.15rem;
+            display: block;
+        }
         .json-key { color: var(--accent); font-weight: 600; margin-right: 0.5rem; }
-        .json-string { color: #7ee787; }
-        .json-number { color: #f2cc60; }
-        .json-boolean { color: #d2a8ff; }
+        .json-string { color: #aff5b4; white-space: pre-wrap; word-break: break-all; }
+        .json-number { color: #f8e3a1; }
+        .json-boolean { color: #d8b4fe; }
         .json-null { color: var(--text-muted); font-style: italic; }
 
         .data-viewer {
             max-height: 800px;
-            overflow: auto; /* Handles both x and y */
+            overflow: auto;
             background: #0d1117;
-            padding: 0.75rem;
+            padding: 1rem;
             border-radius: 8px;
             border: 1px solid var(--border);
-            white-space: pre; /* Ensure no wrapping to allow X scrolling */
+            width: 100%;
         }
 
         @media (max-width: 1100px) {
@@ -281,34 +293,59 @@
             return (ms / 1000).toFixed(2) + 's';
         }
 
+        function highlightJsonText(text) {
+            if (!text) return '';
+            // Basic regex-based highlighting for already pretty-printed strings
+            return text
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"([^"]+)":/g, '<span class="json-key">"$1"</span>:')
+                .replace(/: "(.*)"/g, ': <span class="json-string">"$1"</span>')
+                .replace(/: (-?\d+\.?\d*)/g, ': <span class="json-number">$1</span>')
+                .replace(/: (true|false|null)/g, (match, p1) => `: <span class="json-${p1 === 'null' ? 'null' : 'boolean'}">${p1}</span>`);
+        }
+
         function renderRecursive(data) {
             if (data === null) return '<span class="json-null">null</span>';
+            
             if (typeof data === 'string') {
-                try {
-                    const parsed = JSON.parse(data);
-                    return renderRecursive(parsed);
-                } catch (e) {
-                    if (data.includes('\n')) {
-                        return data.split('\n').map(line => {
-                            const trimmed = line.trim();
-                            if (!trimmed) return '<br>';
-                            const sseMatch = trimmed.match(/^data:\s*(.*)$/);
-                            if (sseMatch) {
-                                try {
-                                    const parsed = JSON.parse(sseMatch[1]);
-                                    return `<div style="margin-bottom:0.2rem"><span class="json-key">data:</span>${renderRecursive(parsed)}</div>`;
-                                } catch (e2) {}
-                            }
-                            try {
-                                const parsed = JSON.parse(trimmed);
-                                return `<div style="margin-bottom:0.2rem">${renderRecursive(parsed)}</div>`;
-                            } catch (e2) {}
-                            return `<div class="json-string">${line}</div>`;
-                        }).join('');
-                    }
-                    return `<span class="json-string">"${data}"</span>`;
+                const trimmed = data.trim();
+                
+                // Try to parse the entire thing as JSON
+                if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+                    try {
+                        return renderRecursive(JSON.parse(data));
+                    } catch (e) {}
                 }
+
+                // If it's multi-line, it might be pretty-printed or NDJSON
+                if (data.includes('\n')) {
+                    // Check if it's NDJSON (each line is a full JSON object)
+                    const lines = data.split('\n');
+                    let allJson = true;
+                    const rendered = lines.map(line => {
+                        const l = line.trim();
+                        if (!l) return '<br>';
+                        const sseMatch = l.match(/^data:\s*(.*)$/);
+                        const jsonPart = sseMatch ? sseMatch[1].trim() : l;
+                        try {
+                            const parsed = JSON.parse(jsonPart);
+                            return `<div style="margin-bottom:0.2rem">${sseMatch ? '<span class="json-key">data:</span>' : ''}${renderRecursive(parsed)}</div>`;
+                        } catch (e) {
+                            allJson = false;
+                            return line;
+                        }
+                    });
+                    
+                    if (allJson) return rendered.join('');
+                    
+                    // If not all lines are JSON, it might be ONE pretty-printed block with newlines
+                    // or mixed content. Apply regex highlighting as a fallback.
+                    return `<div class="json-tree">${highlightJsonText(data)}</div>`;
+                }
+
+                return `<span class="json-string">${data}</span>`;
             }
+
             if (typeof data === 'number') return `<span class="json-number">${data}</span>`;
             if (typeof data === 'boolean') return `<span class="json-boolean">${data}</span>`;
             
@@ -323,7 +360,7 @@
                 return `<div class="json-tree">{${keys.map(key => `<div class="json-item"><span class="json-key">${key}:</span>${renderRecursive(data[key])}</div>`).join('')}}</div>`;
             }
             
-            return String(data);
+            return `<span class="json-string">${String(data)}</span>`;
         }
 
         document.getElementById('duration').textContent = formatDuration(log.duration_ms);

@@ -193,9 +193,11 @@
             padding: 1rem;
             border-radius: 8px;
             border: 1px solid var(--border);
-            white-space: pre;
             max-height: 500px;
-            overflow: auto; /* Handles both x and y */
+            overflow: auto;
+            display: block;
+            white-space: pre-wrap; /* Better for the simple text rendering in dashboard */
+            word-break: break-all;
         }
 
         .stats-summary {
