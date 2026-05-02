@@ -184,14 +184,6 @@
             margin-bottom: 0.4rem;
         }
 
-        .json-tree { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text); }
-        .json-item { margin-left: 1.25rem; border-left: 1px solid var(--border); padding-left: 1rem; margin-top: 0.4rem; }
-        .json-key { color: var(--accent); font-weight: 600; margin-right: 0.5rem; }
-        .json-string { color: #7ee787; }
-        .json-number { color: #f2cc60; }
-        .json-boolean { color: #d2a8ff; }
-        .json-null { color: var(--text-muted); font-style: italic; }
-
         .detail-value {
             font-family: 'JetBrains Mono', monospace;
             font-size: 0.8rem;
@@ -264,10 +256,6 @@
                 padding-top: 0.6rem;
                 margin-top: 0.2rem;
             }
-            .json-item { 
-                margin-left: 0.75rem; 
-                padding-left: 0.75rem; 
-            }
             .detail-value { padding: 0.75rem; font-size: 0.75rem; }
         }
 
@@ -339,35 +327,7 @@
             return ua.split(' ')[0] || null;
         }
 
-        function renderRecursive(data) {
-            if (data === null) return '<span class="json-null">null</span>';
-            if (typeof data === 'string') {
-                try {
-                    const parsed = JSON.parse(data);
-                    return renderRecursive(parsed);
-                } catch (e) {
-                    return `<span class="json-string">"${data}"</span>`;
-                }
-            }
-            if (typeof data === 'number') return `<span class="json-number">${data}</span>`;
-            if (typeof data === 'boolean') return `<span class="json-boolean">${data}</span>`;
-            
-            if (Array.isArray(data)) {
-                if (data.length === 0) return '[]';
-                return `<div class="json-tree">[${data.map(item => `<div class="json-item">${renderRecursive(item)}</div>`).join('')}]</div>`;
-            }
-            
-            if (typeof data === 'object') {
-                const keys = Object.keys(data);
-                if (keys.length === 0) return '{}';
-                return `<div class="json-tree">{${keys.map(key => `
-                    <div class="json-item">
-                        <span class="json-key">${key}:</span>${renderRecursive(data[key])}
-                    </div>`).join('')}}</div>`;
-            }
-            
-            return String(data);
-        }
+
 
         function createLogEntry(log) {
             const entry = document.createElement('div');
@@ -433,9 +393,10 @@
                 </div>
             `;
 
-            // Render recursive data
+            // Render raw data
             const dataContainer = entry.querySelector(`#data-${log.id}-${log.type}`);
-            dataContainer.innerHTML = renderRecursive(log.body || log.response || 'No data');
+            const rawData = log.body || log.response || 'No data';
+            dataContainer.textContent = typeof rawData === 'object' ? JSON.stringify(rawData, null, 2) : rawData;
 
             if (logContainer.firstChild) {
                 logContainer.insertBefore(entry, logContainer.firstChild);
