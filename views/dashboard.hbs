@@ -218,10 +218,8 @@
         .stats-summary span { color: var(--accent); font-weight: 700; margin-left: 0.2rem; }
 
         /* Custom scrollbar for better visibility while staying sleek */
-        ::-webkit-scrollbar { width: 6px; height: 6px; }
-        ::-webkit-scrollbar-track { background: var(--bg); }
-        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 10px; }
-        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+        ::-webkit-scrollbar { display: none; }
+        * { -ms-overflow-style: none; scrollbar-width: none; }
 
         /* Responsiveness */
         @media (max-width: 900px) {
@@ -368,6 +366,106 @@
         .collapsible-section.collapsed .detail-value {
             display: none;
         }
+
+        /* Filter System Styles */
+        .filter-bar {
+            display: flex;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .search-container {
+            flex: 1;
+            min-width: 250px;
+            position: relative;
+        }
+
+        .search-input {
+            width: 100%;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.6rem 1rem 0.6rem 2.5rem;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 0.85rem;
+            outline: none;
+            transition: all 0.2s;
+        }
+
+        .search-input:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.1);
+        }
+
+        .search-icon {
+            position: absolute;
+            left: 0.85rem;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-muted);
+            pointer-events: none;
+        }
+
+        .filter-group {
+            display: flex;
+            gap: 0.4rem;
+            background: rgba(30, 41, 59, 0.5);
+            padding: 0.25rem;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+
+        .filter-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            padding: 0.35rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            user-select: none;
+        }
+
+        .filter-btn:hover {
+            color: var(--text);
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .filter-btn.active {
+            background: var(--accent);
+            color: var(--bg);
+        }
+
+        .filter-btn.active.error {
+            background: var(--error);
+            color: white;
+        }
+
+        .filter-btn.active.success {
+            background: var(--response);
+            color: white;
+        }
+
+        .model-select {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 0.5rem 0.75rem;
+            border-radius: 8px;
+            font-size: 0.75rem;
+            font-family: inherit;
+            outline: none;
+            cursor: pointer;
+        }
+
+        .log-entry.filtered-out {
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -386,6 +484,31 @@
     </header>
 
     <main>
+        <div class="filter-bar">
+            <div class="search-container">
+                <span class="search-icon">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                </span>
+                <input type="text" id="log-search" class="search-input" placeholder="Search paths, models, content..." oninput="handleFilterChange()">
+            </div>
+            
+            <div class="filter-group">
+                <button class="filter-btn active" data-filter="all" onclick="setFilter('status', 'all')">All</button>
+                <button class="filter-btn success" data-filter="success" onclick="setFilter('status', 'success')">Success</button>
+                <button class="filter-btn error" data-filter="error" onclick="setFilter('status', 'error')">Errors</button>
+            </div>
+
+            <div class="filter-group">
+                <button class="filter-btn active" data-filter="all-methods" onclick="setFilter('method', 'all')">All Methods</button>
+                <button class="filter-btn" data-filter="POST" onclick="setFilter('method', 'POST')">POST</button>
+                <button class="filter-btn" data-filter="GET" onclick="setFilter('method', 'GET')">GET</button>
+            </div>
+
+            <select id="model-filter" class="model-select" onchange="handleFilterChange()">
+                <option value="all">All Models</option>
+            </select>
+        </div>
+
         <div class="stats-summary">
             <div>Requests: <span id="stat-requests">0</span></div>
             <div>Avg Latency: <span id="stat-latency">0ms</span></div>
@@ -431,6 +554,83 @@
             outTokens: 0,
             responses: 0
         };
+
+        const activeFilters = {
+            search: '',
+            status: 'all',
+            method: 'all',
+            model: 'all'
+        };
+
+        const knownModels = new Set();
+
+        function setFilter(type, value) {
+            activeFilters[type] = value;
+            
+            // Update UI buttons
+            if (type === 'status') {
+                document.querySelectorAll('[data-filter="all"], [data-filter="success"], [data-filter="error"]').forEach(btn => {
+                    btn.classList.toggle('active', btn.getAttribute('data-filter') === value);
+                });
+            } else if (type === 'method') {
+                document.querySelectorAll('[data-filter="all-methods"], [data-filter="POST"], [data-filter="GET"]').forEach(btn => {
+                    const filterVal = btn.getAttribute('data-filter') === 'all-methods' ? 'all' : btn.getAttribute('data-filter');
+                    btn.classList.toggle('active', filterVal === value);
+                });
+            }
+            
+            handleFilterChange();
+        }
+
+        function handleFilterChange() {
+            activeFilters.search = document.getElementById('log-search').value.toLowerCase();
+            activeFilters.model = document.getElementById('model-filter').value;
+            applyFilters();
+        }
+
+        function applyFilters() {
+            const entries = logContainer.querySelectorAll('.log-entry');
+            entries.forEach(entry => {
+                const log = entry._log;
+                if (!log) return;
+
+                let visible = true;
+
+                // Status filter
+                if (activeFilters.status === 'success') {
+                    if (log.statusCode && log.statusCode >= 400) visible = false;
+                } else if (activeFilters.status === 'error') {
+                    if (!log.statusCode || log.statusCode < 400) visible = false;
+                }
+
+                // Method filter
+                if (visible && activeFilters.method !== 'all') {
+                    if (log.method !== activeFilters.method) visible = false;
+                }
+
+                // Model filter
+                if (visible && activeFilters.model !== 'all') {
+                    if (log.model !== activeFilters.model) visible = false;
+                }
+
+                // Search filter
+                if (visible && activeFilters.search) {
+                    const searchStr = activeFilters.search;
+                    const content = [
+                        log.path,
+                        log.model,
+                        log.userAgent,
+                        log.id,
+                        typeof log.body === 'string' ? log.body : JSON.stringify(log.body),
+                        typeof log.response === 'string' ? log.response : JSON.stringify(log.response)
+                    ].join(' ').toLowerCase();
+                    
+                    if (!content.includes(searchStr)) visible = false;
+                }
+
+                entry.classList.toggle('filtered-out', !visible);
+            });
+        }
 
         function updateStats() {
             document.getElementById('stat-requests').textContent = stats.requests;
@@ -604,6 +804,19 @@
             if (logContainer.children.length > 100) {
                 logContainer.lastChild.remove();
             }
+
+            // Update known models
+            if (currentLog.model && !knownModels.has(currentLog.model)) {
+                knownModels.add(currentLog.model);
+                const modelFilter = document.getElementById('model-filter');
+                const option = document.createElement('option');
+                option.value = currentLog.model;
+                option.textContent = currentLog.model;
+                modelFilter.appendChild(option);
+            }
+
+            // Apply filters to new entry
+            applyFilters();
         }
 
         const evtSource = new EventSource("/logs/stream");

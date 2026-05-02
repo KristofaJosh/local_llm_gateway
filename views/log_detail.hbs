@@ -22,11 +22,9 @@
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
         
-        /* Custom scrollbar for better visibility while staying sleek */
-        ::-webkit-scrollbar { width: 6px; height: 6px; }
-        ::-webkit-scrollbar-track { background: var(--bg); }
-        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 10px; }
-        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+        /* Hide scrollbars but keep functionality */
+        ::-webkit-scrollbar { display: none; }
+        * { -ms-overflow-style: none; scrollbar-width: none; }
 
         body {
             background-color: var(--bg);
