@@ -86,12 +86,29 @@
             100% { transform: scale(0.95); opacity: 0.8; }
         }
 
-        main { padding: 1.5rem; max-width: 1200px; margin: 0 auto; }
+        main { 
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 1rem 1.5rem; 
+            max-width: 1200px; 
+            margin: 0 auto; 
+            width: 100%;
+            overflow: hidden;
+        }
+
+        .scroll-area {
+            flex: 1;
+            overflow-y: auto;
+            padding-right: 0.5rem;
+            margin-top: 0.5rem;
+        }
 
         .log-container {
             display: flex;
             flex-direction: column;
             gap: 0.75rem;
+            padding-bottom: 2rem;
         }
 
         .log-entry {
@@ -192,10 +209,16 @@
 
         .stats-summary span { color: var(--accent); font-weight: 700; margin-left: 0.2rem; }
 
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: var(--bg); }
-        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+        ::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none !important; }
+        * { scrollbar-width: none !important; -ms-overflow-style: none !important; }
+
+        .json-tree { font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: var(--text); }
+        .json-item { margin-left: 1rem; border-left: 1px solid var(--border); padding-left: 0.75rem; margin-top: 0.25rem; }
+        .json-key { color: var(--accent); font-weight: 600; margin-right: 0.5rem; }
+        .json-string { color: var(--response); }
+        .json-number { color: #f59e0b; }
+        .json-boolean { color: #8b5cf6; }
+        .json-null { color: var(--text-muted); font-style: italic; }
 
         /* Responsiveness */
         @media (max-width: 768px) {
@@ -237,8 +260,10 @@
             <div>Tokens (In/Out): <span id="stat-tokens">0 / 0</span></div>
         </div>
 
-        <div id="log-container" class="log-container">
-            <!-- Logs will appear here -->
+        <div class="scroll-area">
+            <div id="log-container" class="log-container">
+                <!-- Logs will appear here -->
+            </div>
         </div>
     </main>
 
@@ -265,23 +290,47 @@
         }
 
         function getFriendlyName(ua, id) {
-            if (!ua || ua === 'Unknown') return `[${id}]`;
+            if (!ua || ua === 'Unknown') return null;
             
-            // Try to extract app name from common patterns
-            // Patterns: "App/1.0", "Mozilla/5.0 (Device; ...)", etc.
             const match = ua.match(/^([^/]+)\//) || ua.match(/^Mozilla\/5\.0 \(([^;)]+)/);
             if (match && match[1]) {
                 const name = match[1].trim();
-                // Avoid generic names
                 if (!['Mozilla', 'AppleWebKit', 'Chrome', 'Safari'].includes(name)) {
                     return name;
                 }
             }
+            if (ua.includes('Mozilla')) return null;
+            return ua.split(' ')[0] || null;
+        }
+
+        function renderRecursive(data) {
+            if (data === null) return '<span class="json-null">null</span>';
+            if (typeof data === 'string') {
+                try {
+                    const parsed = JSON.parse(data);
+                    return renderRecursive(parsed);
+                } catch (e) {
+                    return `<span class="json-string">"${data}"</span>`;
+                }
+            }
+            if (typeof data === 'number') return `<span class="json-number">${data}</span>`;
+            if (typeof data === 'boolean') return `<span class="json-boolean">${data}</span>`;
             
-            // If it looks like a browser UA, return a shortened version or just the ID
-            if (ua.includes('Mozilla')) return `[${id}]`;
+            if (Array.isArray(data)) {
+                if (data.length === 0) return '[]';
+                return `<div class="json-tree">[${data.map(item => `<div class="json-item">${renderRecursive(item)}</div>`).join('')}]</div>`;
+            }
             
-            return ua.split(' ')[0] || `[${id}]`;
+            if (typeof data === 'object') {
+                const keys = Object.keys(data);
+                if (keys.length === 0) return '{}';
+                return `<div class="json-tree">{${keys.map(key => `
+                    <div class="json-item">
+                        <span class="json-key">${key}:</span>${renderRecursive(data[key])}
+                    </div>`).join('')}}</div>`;
+            }
+            
+            return String(data);
         }
 
         function createLogEntry(log) {
@@ -293,19 +342,22 @@
             const badgeClass = isResponse ? (isError ? 'badge-error' : 'badge-response') : 'badge-request';
             const badgeText = isResponse ? 'Response' : 'Request';
             const deviceName = getFriendlyName(log.userAgent, log.id);
+            const headerLabel = deviceName || `[${log.id}]`;
 
             entry.innerHTML = `
                 <div class="log-header" onclick="this.parentElement.classList.toggle('expanded')">
                     <div class="log-info">
                         <span class="badge ${badgeClass}">${badgeText}</span>
-                        <span class="device-tag">${deviceName}</span>
-                        <span class="id">${deviceName.includes(log.id) ? '' : `[${log.id}]`}</span>
+                        <span class="device-tag">${headerLabel}</span>
                         <span class="method">${log.method}</span>
                         <span class="path">${log.path}</span>
                     </div>
-                    <div class="time">
+                    <div class="time" style="display: flex; align-items: center; gap: 0.5rem;">
                         ${isResponse ? `<span>${formatDuration(log.duration_ms)}</span> • ` : ''}
                         ${new Date(log.timestamp).toLocaleTimeString()}
+                        <a href="/dashboard/${log.id}" target="_blank" onclick="event.stopPropagation()" style="color: var(--accent); display: flex;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                        </a>
                     </div>
                 </div>
                 <div class="log-details">
@@ -340,10 +392,14 @@
                         <label style="display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; margin-bottom: 0.5rem;">
                             ${isResponse ? 'Response Data' : 'Request Body'}
                         </label>
-                        <div class="detail-value">${log.body || log.response || 'No data'}</div>
+                        <div class="detail-value" id="data-${log.id}-${log.type}"></div>
                     </div>
                 </div>
             `;
+
+            // Render recursive data
+            const dataContainer = entry.querySelector(`#data-${log.id}-${log.type}`);
+            dataContainer.innerHTML = renderRecursive(log.body || log.response || 'No data');
 
             if (logContainer.firstChild) {
                 logContainer.insertBefore(entry, logContainer.firstChild);

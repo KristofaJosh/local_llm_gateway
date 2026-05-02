@@ -59,6 +59,10 @@ async function startServer() {
     root: path.join(__dirname, 'views'),
   });
 
+  // Register helpers
+  handlebars.registerHelper('json', (context) => JSON.stringify(context));
+  handlebars.registerHelper('gt', (a, b) => a > b);
+
   // Support any content type by parsing as JSON or raw
   app.addContentTypeParser('*', (request, payload, done) => {
     let body = '';
@@ -192,6 +196,22 @@ async function startServer() {
 
   app.get('/dashboard', (request, reply) => {
     return reply.view('dashboard.hbs');
+  });
+
+  app.get('/dashboard/:id', (request, reply) => {
+    const { id } = request.params;
+    const history = trafficLogger.getHistory();
+    // Find all entries for this ID (request and response)
+    const entries = history.filter(log => log.id === id);
+    
+    if (entries.length === 0) {
+      return reply.status(404).send({ error: 'Log not found' });
+    }
+
+    // Merge them for a unified view
+    const log = entries.reduce((acc, curr) => ({ ...acc, ...curr }), {});
+    
+    return reply.view('log_detail.hbs', { log });
   });
 
   app.get('/logs/stream', (request, reply) => {

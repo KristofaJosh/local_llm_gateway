@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Log Details - [{{log.id}}]</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0b0f1a;
+            --card-bg: #161b22;
+            --text: #c9d1d9;
+            --text-muted: #8b949e;
+            --accent: #58a6ff;
+            --request: #2f81f7;
+            --response: #238636;
+            --error: #da3633;
+            --border: #30363d;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        ::-webkit-scrollbar { display: none; }
+        * { scrollbar-width: none; -ms-overflow-style: none; }
+
+        body {
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: 'Inter', sans-serif;
+            line-height: 1.5;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            font-size: 14px;
+        }
+
+        header {
+            padding: 1rem 2rem;
+            background: rgba(13, 17, 23, 0.9);
+            border-bottom: 1px solid var(--border);
+            backdrop-filter: blur(8px);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .back-btn {
+            color: var(--text-muted);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .back-btn:hover { color: var(--accent); }
+
+        main {
+            padding: 2rem;
+            max-width: 1400px;
+            margin: 0 auto;
+            width: 100%;
+            display: grid;
+            grid-template-columns: 350px 1fr;
+            gap: 2rem;
+        }
+
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .content {
+            display: flex;
+            flex-direction: column;
+            gap: 2rem;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+        }
+
+        .section-title {
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .section-title::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: var(--border);
+        }
+
+        .meta-item {
+            margin-bottom: 1rem;
+        }
+
+        .meta-label {
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            margin-bottom: 0.25rem;
+        }
+
+        .meta-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+            color: var(--text);
+            word-break: break-all;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.2rem 0.6rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+
+        .badge-request { background: rgba(47, 129, 247, 0.15); color: var(--request); }
+        .badge-response { background: rgba(35, 134, 54, 0.15); color: var(--response); }
+        .badge-error { background: rgba(218, 54, 51, 0.15); color: var(--error); }
+
+        .json-tree { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text); }
+        .json-item { margin-left: 1.25rem; border-left: 1px solid var(--border); padding-left: 1rem; margin-top: 0.4rem; }
+        .json-key { color: var(--accent); font-weight: 600; margin-right: 0.5rem; }
+        .json-string { color: #7ee787; }
+        .json-number { color: #f2cc60; }
+        .json-boolean { color: #d2a8ff; }
+        .json-null { color: var(--text-muted); font-style: italic; }
+
+        .data-viewer {
+            max-height: 800px;
+            overflow-y: auto;
+            background: #0d1117;
+            padding: 1rem;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+
+        @media (max-width: 1000px) {
+            main { grid-template-columns: 1fr; }
+            header { padding: 1rem; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <a href="/dashboard" class="back-btn">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+            Dashboard
+        </a>
+        <div class="meta-value" style="color: var(--text-muted)">Request ID: <span style="color: var(--accent)">{{log.id}}</span></div>
+    </header>
+
+    <main>
+        <div class="sidebar">
+            <div class="card">
+                <div class="section-title">Overview</div>
+                <div class="meta-item">
+                    <div class="meta-label">Path</div>
+                    <div class="meta-value">{{log.method}} {{log.path}}</div>
+                </div>
+                <div class="meta-item">
+                    <div class="meta-label">Status</div>
+                    <div class="meta-value">
+                        <span class="badge {{#if log.statusCode}}{{#if (gt log.statusCode 399)}}badge-error{{else}}badge-response{{/if}}{{else}}badge-request{{/if}}">
+                            {{#if log.statusCode}}{{log.statusCode}}{{else}}Pending{{/if}}
+                        </span>
+                    </div>
+                </div>
+                <div class="meta-item">
+                    <div class="meta-label">Duration</div>
+                    <div class="meta-value" id="duration"></div>
+                </div>
+                <div class="meta-item">
+                    <div class="meta-label">Timestamp</div>
+                    <div class="meta-value">{{log.timestamp}}</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="section-title">Metadata</div>
+                {{#if log.model}}
+                <div class="meta-item">
+                    <div class="meta-label">Model</div>
+                    <div class="meta-value">{{log.model}}</div>
+                </div>
+                {{/if}}
+                <div class="meta-item">
+                    <div class="meta-label">Client</div>
+                    <div class="meta-value">{{log.userAgent}}</div>
+                </div>
+                {{#if log.input_tokens}}
+                <div class="meta-item">
+                    <div class="meta-label">Input Tokens</div>
+                    <div class="meta-value">{{log.input_tokens}}</div>
+                </div>
+                {{/if}}
+                {{#if log.output_tokens}}
+                <div class="meta-item">
+                    <div class="meta-label">Output Tokens</div>
+                    <div class="meta-value">{{log.output_tokens}}</div>
+                </div>
+                {{/if}}
+            </div>
+        </div>
+
+        <div class="content">
+            <div class="card">
+                <div class="section-title">Request Body</div>
+                <div id="request-data" class="data-viewer"></div>
+            </div>
+
+            {{#if log.response}}
+            <div class="card">
+                <div class="section-title">Response Data</div>
+                <div id="response-data" class="data-viewer"></div>
+            </div>
+            {{/if}}
+        </div>
+    </main>
+
+    <script>
+        const log = {{{json log}}};
+
+        function formatDuration(ms) {
+            if (!ms) return 'N/A';
+            if (ms < 1000) return ms + 'ms';
+            return (ms / 1000).toFixed(2) + 's';
+        }
+
+        function renderRecursive(data) {
+            if (data === null) return '<span class="json-null">null</span>';
+            if (typeof data === 'string') {
+                try {
+                    const parsed = JSON.parse(data);
+                    return renderRecursive(parsed);
+                } catch (e) {
+                    return `<span class="json-string">"${data}"</span>`;
+                }
+            }
+            if (typeof data === 'number') return `<span class="json-number">${data}</span>`;
+            if (typeof data === 'boolean') return `<span class="json-boolean">${data}</span>`;
+            
+            if (Array.isArray(data)) {
+                if (data.length === 0) return '[]';
+                return `<div class="json-tree">[${data.map(item => `<div class="json-item">${renderRecursive(item)}</div>`).join('')}]</div>`;
+            }
+            
+            if (typeof data === 'object') {
+                const keys = Object.keys(data);
+                if (keys.length === 0) return '{}';
+                return `<div class="json-tree">{${keys.map(key => `
+                    <div class="json-item">
+                        <span class="json-key">${key}:</span>${renderRecursive(data[key])}
+                    </div>`).join('')}}</div>`;
+            }
+            
+            return String(data);
+        }
+
+        document.getElementById('duration').textContent = formatDuration(log.duration_ms);
+        document.getElementById('request-data').innerHTML = renderRecursive(log.body || 'No data');
+        if (log.response) {
+            document.getElementById('response-data').innerHTML = renderRecursive(log.response);
+        }
+    </script>
+</body>
+</html>
