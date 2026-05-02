@@ -1,10 +1,17 @@
 import 'dotenv/config';
 import fastify from 'fastify';
+import view from '@fastify/view';
+import handlebars from 'handlebars';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import tokenizer from 'gpt-tokenizer';
 import http from 'http';
 import { v4 as uuidv4 } from 'uuid';
 import trafficLogger from './lib/logger.js';
 import OllamaManager from './lib/ollama.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const CONFIG = {
   OLLAMA_HOST: process.env.OLLAMA_HOST || '127.0.0.1',
@@ -36,12 +43,20 @@ async function startServer() {
   });
 
   // Start Ollama child process
-  ollama.start();
+  await ollama.start();
 
   const app = fastify({
     bodyLimit: CONFIG.BODY_LIMIT,
     trustProxy: true,
     logger: false // Hide Fastify's internal logs
+  });
+
+  // Register view engine
+  app.register(view, {
+    engine: {
+      handlebars: handlebars,
+    },
+    root: path.join(__dirname, 'views'),
   });
 
   // Support any content type by parsing as JSON or raw
@@ -169,6 +184,32 @@ async function startServer() {
       proxyReq.write(typeof request.body === 'string' ? request.body : JSON.stringify(request.body));
     }
     proxyReq.end();
+  });
+
+  app.get('/dashboard', (request, reply) => {
+    return reply.view('dashboard.hbs');
+  });
+
+  app.get('/logs/stream', (request, reply) => {
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive'
+    });
+
+    // Send history first
+    const history = trafficLogger.getHistory();
+    reply.raw.write(`data: ${JSON.stringify(history)}\n\n`);
+
+    const onLog = (log) => {
+      reply.raw.write(`data: ${JSON.stringify(log)}\n\n`);
+    };
+
+    trafficLogger.events.on('log', onLog);
+
+    request.raw.on('close', () => {
+      trafficLogger.events.off('log', onLog);
+    });
   });
 
   try {

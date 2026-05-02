@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ollama Gateway Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0f172a;
+            --card-bg: #1e293b;
+            --text: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent: #38bdf8;
+            --request: #3b82f6;
+            --response: #10b981;
+            --error: #ef4444;
+            --border: #334155;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: 'Inter', -apple-system, sans-serif;
+            line-height: 1.5;
+            overflow-x: hidden;
+        }
+
+        header {
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(15, 23, 42, 0.8);
+            backdrop-filter: blur(12px);
+            position: sticky;
+            top: 0;
+            z-index: 50;
+        }
+
+        .logo {
+            font-size: 1.25rem;
+            font-weight: 700;
+            letter-spacing: -0.025em;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .logo span { color: var(--accent); }
+
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            padding: 0.25rem 0.75rem;
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--response);
+            border-radius: 9999px;
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background-color: var(--response);
+            border-radius: 50%;
+            box-shadow: 0 0 12px var(--response);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(0.95); opacity: 0.8; }
+            50% { transform: scale(1.05); opacity: 1; }
+            100% { transform: scale(0.95); opacity: 0.8; }
+        }
+
+        main { padding: 2rem; max-width: 1200px; margin: 0 auto; }
+
+        .log-container {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .log-entry {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+            transition: transform 0.2s, box-shadow 0.2s;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .log-header {
+            padding: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .log-header:hover { background: rgba(255, 255, 255, 0.02); }
+
+        .log-info { display: flex; align-items: center; gap: 1rem; }
+
+        .badge {
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+        }
+
+        .badge-request { background: rgba(59, 130, 246, 0.15); color: var(--request); }
+        .badge-response { background: rgba(16, 185, 129, 0.15); color: var(--response); }
+        .badge-error { background: rgba(239, 68, 68, 0.15); color: var(--error); }
+
+        .method { font-family: 'JetBrains Mono', monospace; font-weight: 600; color: var(--text-muted); }
+        .path { font-family: 'JetBrains Mono', monospace; font-weight: 500; }
+        .id { color: var(--text-muted); font-size: 0.875rem; }
+        .time { color: var(--text-muted); font-size: 0.875rem; }
+
+        .log-details {
+            padding: 0 1rem 1rem 1rem;
+            border-top: 1px solid var(--border);
+            display: none;
+        }
+
+        .log-entry.expanded .log-details { display: block; }
+
+        .details-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin-top: 1rem;
+        }
+
+        .detail-item label {
+            display: block;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            margin-bottom: 0.5rem;
+        }
+
+        .detail-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.875rem;
+            background: #0f172a;
+            padding: 0.75rem;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            white-space: pre-wrap;
+            word-break: break-all;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .stats-summary {
+            display: flex;
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            font-weight: 500;
+            background: rgba(30, 41, 59, 0.5);
+            padding: 0.75rem 1.25rem;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            width: fit-content;
+        }
+
+        .stats-summary span { color: var(--accent); font-weight: 700; margin-left: 0.25rem; }
+
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: var(--bg); }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+        /* Responsiveness */
+        @media (max-width: 768px) {
+            header { padding: 1rem; }
+            main { padding: 1rem; }
+            .stats-summary { 
+                flex-direction: column; 
+                gap: 0.5rem; 
+                width: 100%;
+                padding: 1rem;
+            }
+            .log-header { flex-direction: column; align-items: flex-start; gap: 0.75rem; }
+            .log-info { flex-wrap: wrap; gap: 0.5rem; }
+            .time { font-size: 0.75rem; }
+            .details-grid { grid-template-columns: 1fr; gap: 1rem; }
+            .detail-value { font-size: 0.8125rem; padding: 0.5rem; }
+        }
+
+        @media (max-width: 480px) {
+            .logo { font-size: 1.1rem; }
+            .status { font-size: 0.75rem; padding: 0.2rem 0.5rem; }
+            .id { display: none; } /* Hide ID on very small screens to save space */
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo"><span>&lambda;</span> Ollama Gateway</div>
+        <div class="status">
+            <div class="status-dot"></div>
+            Live Monitoring
+        </div>
+    </header>
+
+    <main>
+        <div class="stats-summary">
+            <div>Requests: <span id="stat-requests">0</span></div>
+            <div>Avg Latency: <span id="stat-latency">0ms</span></div>
+            <div>Tokens (In/Out): <span id="stat-tokens">0 / 0</span></div>
+        </div>
+
+        <div id="log-container" class="log-container">
+            <!-- Logs will appear here -->
+        </div>
+    </main>
+
+    <script>
+        const logContainer = document.getElementById('log-container');
+        const stats = {
+            requests: 0,
+            totalLatency: 0,
+            inTokens: 0,
+            outTokens: 0,
+            responses: 0
+        };
+
+        function updateStats() {
+            document.getElementById('stat-requests').textContent = stats.requests;
+            const avgLatency = stats.responses > 0 ? Math.round(stats.totalLatency / stats.responses) : 0;
+            document.getElementById('stat-latency').textContent = avgLatency + 'ms';
+            document.getElementById('stat-tokens').textContent = stats.inTokens + ' / ' + stats.outTokens;
+        }
+
+        function createLogEntry(log) {
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            const isResponse = log.type === 'response';
+            const isError = log.statusCode >= 400;
+            
+            const badgeClass = isResponse ? (isError ? 'badge-error' : 'badge-response') : 'badge-request';
+            const badgeText = isResponse ? 'Response' : 'Request';
+
+            entry.innerHTML = `
+                <div class="log-header" onclick="this.parentElement.classList.toggle('expanded')">
+                    <div class="log-info">
+                        <span class="badge ${badgeClass}">${badgeText}</span>
+                        <span class="id">[${log.id}]</span>
+                        <span class="method">${log.method}</span>
+                        <span class="path">${log.path}</span>
+                    </div>
+                    <div class="time">
+                        ${isResponse ? `<span>${log.duration_ms}ms</span> • ` : ''}
+                        ${new Date(log.timestamp).toLocaleTimeString()}
+                    </div>
+                </div>
+                <div class="log-details">
+                    <div class="details-grid">
+                        ${log.model ? `
+                        <div class="detail-item">
+                            <label>Model</label>
+                            <div class="detail-value">${log.model}</div>
+                        </div>` : ''}
+                        ${log.input_tokens ? `
+                        <div class="detail-item">
+                            <label>Input Tokens</label>
+                            <div class="detail-value">${log.input_tokens}</div>
+                        </div>` : ''}
+                        ${log.output_tokens ? `
+                        <div class="detail-item">
+                            <label>Output Tokens</label>
+                            <div class="detail-value">${log.output_tokens}</div>
+                        </div>` : ''}
+                        ${log.statusCode ? `
+                        <div class="detail-item">
+                            <label>Status</label>
+                            <div class="detail-value ${isError ? 'badge-error' : ''}" style="display:inline-block">${log.statusCode}</div>
+                        </div>` : ''}
+                    </div>
+                    <div style="margin-top: 1.5rem;">
+                        <label style="display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; margin-bottom: 0.5rem;">
+                            ${isResponse ? 'Response Data' : 'Request Body'}
+                        </label>
+                        <div class="detail-value">${log.body || log.response || 'No data'}</div>
+                    </div>
+                </div>
+            `;
+
+            if (logContainer.firstChild) {
+                logContainer.insertBefore(entry, logContainer.firstChild);
+            } else {
+                logContainer.appendChild(entry);
+            }
+
+            // Update stats
+            if (log.type === 'request') {
+                stats.requests++;
+                if (log.input_tokens) stats.inTokens += log.input_tokens;
+            } else if (log.type === 'response') {
+                stats.responses++;
+                if (log.duration_ms) stats.totalLatency += log.duration_ms;
+                if (log.output_tokens) stats.outTokens += log.output_tokens;
+            }
+            updateStats();
+
+            // Keep only last 100 in DOM
+            if (logContainer.children.length > 100) {
+                logContainer.lastChild.remove();
+            }
+        }
+
+        const evtSource = new EventSource("/logs/stream");
+        evtSource.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (Array.isArray(data)) {
+                data.forEach(createLogEntry);
+            } else {
+                createLogEntry(data);
+            }
+        };
+
+        evtSource.onerror = (err) => {
+            console.error("EventSource failed:", err);
+            document.querySelector('.status').style.color = 'var(--error)';
+            document.querySelector('.status').style.background = 'rgba(239, 68, 68, 0.1)';
+            document.querySelector('.status-dot').style.backgroundColor = 'var(--error)';
+            document.querySelector('.status-dot').style.boxShadow = '0 0 12px var(--error)';
+        };
+    </script>
+</body>
+</html>
