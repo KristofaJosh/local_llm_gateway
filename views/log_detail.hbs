@@ -262,6 +262,32 @@
             display: none;
         }
 
+        .toggle-view-btn, .wrap-toggle {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            padding: 0.2rem 0.6rem;
+            border-radius: 4px;
+            font-size: 0.65rem;
+            font-weight: 600;
+            cursor: pointer;
+            text-transform: uppercase;
+            transition: all 0.2s;
+            line-height: 1;
+        }
+
+        .toggle-view-btn:hover, .wrap-toggle:hover {
+            background: var(--accent);
+            color: white;
+            border-color: var(--accent);
+        }
+
+        .toggle-view-btn.active, .wrap-toggle.active {
+            background: rgba(88, 166, 255, 0.15);
+            color: var(--accent);
+            border-color: var(--accent);
+        }
+
         @media (max-width: 1100px) {
             main { 
                 grid-template-columns: 1fr; 
@@ -323,6 +349,14 @@
                     <div class="meta-value" id="duration"></div>
                 </div>
                 <div class="meta-item">
+                    <div class="meta-label">Request Size</div>
+                    <div class="meta-value">{{bytes log.request_size}}</div>
+                </div>
+                <div class="meta-item">
+                    <div class="meta-label">Response Size</div>
+                    <div class="meta-value">{{bytes log.response_size}}</div>
+                </div>
+                <div class="meta-item">
                     <div class="meta-label">Timestamp</div>
                     <div class="meta-value">{{log.timestamp}}</div>
                 </div>
@@ -369,15 +403,20 @@
                 </div>
             </div>
 
-            {{#if log.response}}
+            {{#if (or log.response log.isStream)}}
             <div class="card">
                 <div class="collapsible-section" id="res-section">
                     <div class="collapsible-header" onclick="this.parentElement.classList.toggle('collapsed')">
                         <div class="section-title">Response Data</div>
-                        <button class="wrap-toggle" onclick="event.stopPropagation(); toggleWrap(this, 'response-data')">Wrap Text</button>
-                        <span class="collapsible-icon">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
-                        </span>
+                        <div style="display: flex; gap: 0.5rem; align-items: center;">
+                            {{#if log.isStream}}
+                            <button id="stream-toggle-detail" class="toggle-view-btn" onclick="event.stopPropagation(); toggleStreamMode(this)">Clean View</button>
+                            {{/if}}
+                            <button class="wrap-toggle" onclick="event.stopPropagation(); toggleWrap(this, 'response-data')">Wrap Text</button>
+                            <span class="collapsible-icon">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                            </span>
+                        </div>
                     </div>
                     <div id="response-data" class="data-viewer"></div>
                 </div>
@@ -406,16 +445,21 @@
                 .replace(/: (true|false|null)/g, (match, p1) => `: <span class="json-${p1 === 'null' ? 'null' : 'boolean'}">${p1}</span>`);
         }
 
-        function renderRecursive(data) {
+        function renderRecursive(data, isRaw = true) {
             if (data === null) return '<span class="json-null">null</span>';
             
             if (typeof data === 'string') {
                 const trimmed = data.trim();
                 
+                // If it's NOT raw (clean mode), just return the text
+                if (!isRaw) {
+                    return `<div class="json-tree">${data.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`;
+                }
+
                 // Try to parse the entire thing as JSON
                 if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
                     try {
-                        return renderRecursive(JSON.parse(data));
+                        return renderRecursive(JSON.parse(data), isRaw);
                     } catch (e) {}
                 }
 
@@ -431,7 +475,7 @@
                         const jsonPart = sseMatch ? sseMatch[1].trim() : l;
                         try {
                             const parsed = JSON.parse(jsonPart);
-                            return `<div style="margin-bottom:0.2rem">${sseMatch ? '<span class="json-key">data:</span>' : ''}${renderRecursive(parsed)}</div>`;
+                            return `<div style="margin-bottom:0.2rem">${sseMatch ? '<span class="json-key">data:</span>' : ''}${renderRecursive(parsed, isRaw)}</div>`;
                         } catch (e) {
                             allJson = false;
                             return line;
@@ -453,16 +497,51 @@
             
             if (Array.isArray(data)) {
                 if (data.length === 0) return '[]';
-                return `<div class="json-tree">[${data.map(item => `<div class="json-item">${renderRecursive(item)}</div>`).join('')}]</div>`;
+                return `<div class="json-tree">[${data.map(item => `<div class="json-item">${renderRecursive(item, isRaw)}</div>`).join('')}]</div>`;
             }
             
             if (typeof data === 'object') {
                 const keys = Object.keys(data);
                 if (keys.length === 0) return '{}';
-                return `<div class="json-tree">{${keys.map(key => `<div class="json-item"><span class="json-key">${key}:</span>${renderRecursive(data[key])}</div>`).join('')}}</div>`;
+                return `<div class="json-tree">{${keys.map(key => `<div class="json-item"><span class="json-key">${key}:</span>${renderRecursive(data[key], isRaw)}</div>`).join('')}}</div>`;
             }
             
             return `<span class="json-string">${String(data)}</span>`;
+        }
+
+        function parseStream(raw) {
+            if (!raw) return '';
+            try {
+                return raw.split('\n')
+                    .map(line => {
+                        const l = line.trim();
+                        if (!l) return '';
+                        const sseMatch = l.match(/^data:\s*(.*)$/);
+                        const jsonPart = sseMatch ? sseMatch[1] : l;
+                        try {
+                            const parsed = JSON.parse(jsonPart);
+                            return parsed.message?.content || parsed.response || '';
+                        } catch (e) {
+                            return '';
+                        }
+                    }).join('');
+            } catch (e) {
+                return raw;
+            }
+        }
+
+        let isRawMode = true;
+
+        function toggleStreamMode(btn) {
+            isRawMode = !isRawMode;
+            btn.textContent = isRawMode ? 'Clean View' : 'Raw View';
+            
+            if (isRawMode) {
+                document.getElementById('response-data').innerHTML = renderRecursive(log.response, true);
+            } else {
+                const cleaned = parseStream(log.response);
+                document.getElementById('response-data').innerHTML = renderRecursive(cleaned, false);
+            }
         }
 
         function toggleWrap(btn, targetId) {
@@ -473,9 +552,9 @@
         }
 
         document.getElementById('duration').textContent = formatDuration(log.duration_ms);
-        document.getElementById('request-data').innerHTML = renderRecursive(log.body || 'No data');
+        document.getElementById('request-data').innerHTML = renderRecursive(log.body || 'No data', true);
         if (log.response) {
-            document.getElementById('response-data').innerHTML = renderRecursive(log.response);
+            document.getElementById('response-data').innerHTML = renderRecursive(log.response, true);
         }
     </script>
 </body>

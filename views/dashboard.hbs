@@ -378,6 +378,38 @@
             display: none;
         }
 
+        .toggle-view-btn, .wrap-toggle {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            padding: 0.2rem 0.6rem;
+            border-radius: 4px;
+            font-size: 0.65rem;
+            font-weight: 600;
+            cursor: pointer;
+            text-transform: uppercase;
+            transition: all 0.2s;
+            line-height: 1;
+            white-space: nowrap;
+        }
+
+        .toggle-view-btn:hover, .wrap-toggle:hover {
+            background: var(--accent);
+            color: white;
+            border-color: var(--accent);
+        }
+
+        .toggle-view-btn.active, .wrap-toggle.active {
+            background: rgba(56, 189, 248, 0.15);
+            color: var(--accent);
+            border-color: var(--accent);
+        }
+
+        .detail-value.wrapped {
+            white-space: pre-wrap !important;
+            word-break: break-all;
+        }
+
         /* Filter System Styles */
         .filter-bar {
             display: flex;
@@ -654,6 +686,15 @@
             if (ms < 1000) return ms + 'ms';
             return (ms / 1000).toFixed(2) + 's';
         }
+        
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            if (!bytes) return 'N/A';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
 
         function getFriendlyName(ua, id) {
             if (!ua || ua === 'Unknown') return null;
@@ -667,6 +708,28 @@
             }
             if (ua.includes('Mozilla')) return null;
             return ua.split(' ')[0] || null;
+        }
+
+        function parseStream(raw) {
+            if (!raw) return '';
+            try {
+                return raw.split('\n')
+                    .map(line => {
+                        const l = line.trim();
+                        if (!l) return '';
+                        // Handle SSE format "data: {...}" or raw JSON
+                        const sseMatch = l.match(/^data:\s*(.*)$/);
+                        const jsonPart = sseMatch ? sseMatch[1] : l;
+                        try {
+                            const parsed = JSON.parse(jsonPart);
+                            return parsed.message?.content || parsed.response || '';
+                        } catch (e) {
+                            return '';
+                        }
+                    }).join('');
+            } catch (e) {
+                return raw;
+            }
         }
 
 
@@ -768,6 +831,16 @@
                             <label>Status</label>
                             <div class="detail-value ${isError ? 'badge-error' : ''}" style="display:inline-block">${currentLog.statusCode}</div>
                         </div>` : ''}
+                        ${currentLog.request_size ? `
+                        <div class="detail-item">
+                            <label>Request Size</label>
+                            <div class="detail-value">${formatBytes(currentLog.request_size)}</div>
+                        </div>` : ''}
+                        ${currentLog.response_size ? `
+                        <div class="detail-item">
+                            <label>Response Size</label>
+                            <div class="detail-value">${formatBytes(currentLog.response_size)}</div>
+                        </div>` : ''}
                     </div>
                     <div class="collapsible-section ${wasReqCollapsed ? 'collapsed' : ''}" id="req-section-${currentLog.id}">
                         <div class="collapsible-header" onclick="this.parentElement.classList.toggle('collapsed')">
@@ -778,13 +851,17 @@
                         </div>
                         <div class="detail-value" id="request-data-${currentLog.id}"></div>
                     </div>
-                    ${currentLog.response ? `
+                    ${(currentLog.response || currentLog.isStream || currentLog.type === 'streaming') ? `
                     <div class="collapsible-section ${wasResCollapsed ? 'collapsed' : ''}" id="res-section-${currentLog.id}">
                         <div class="collapsible-header" onclick="this.parentElement.classList.toggle('collapsed')">
                             <label>Response Data</label>
-                            <span class="collapsible-icon">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
-                            </span>
+                            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                                ${(currentLog.isStream || currentLog.type === 'streaming') ? `<button id="stream-toggle-${currentLog.id}" class="toggle-view-btn" onclick="event.stopPropagation(); toggleStreamView('${currentLog.id}')">${entry._viewMode === 'clean' ? 'Raw View' : 'Clean View'}</button>` : ''}
+                                <button id="wrap-toggle-${currentLog.id}" class="wrap-toggle" onclick="event.stopPropagation(); toggleWrap(this, 'response-data-${currentLog.id}')">Wrap Text</button>
+                                <span class="collapsible-icon">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                </span>
+                            </div>
                         </div>
                         <div class="detail-value" id="response-data-${currentLog.id}"></div>
                     </div>` : ''}
@@ -800,7 +877,12 @@
 
             if (currentLog.response) {
                 const responseContainer = entry.querySelector(`#response-data-${currentLog.id}`);
-                responseContainer.textContent = typeof currentLog.response === 'object' ? JSON.stringify(currentLog.response, null, 2) : currentLog.response;
+                const isClean = entry._viewMode === 'clean';
+                if (currentLog.isStream && isClean) {
+                    responseContainer.textContent = parseStream(currentLog.response);
+                } else {
+                    responseContainer.textContent = typeof currentLog.response === 'object' ? JSON.stringify(currentLog.response, null, 2) : currentLog.response;
+                }
             }
 
             if (isNew) {
@@ -861,6 +943,21 @@
             document.querySelector('.status-dot').style.backgroundColor = 'var(--error)';
             document.querySelector('.status-dot').style.boxShadow = '0 0 12px var(--error)';
         };
+        function toggleWrap(btn, targetId) {
+            const el = document.getElementById(targetId);
+            if (!el) return;
+            const isWrapped = el.classList.toggle('wrapped');
+            btn.classList.toggle('active', isWrapped);
+            btn.textContent = isWrapped ? 'Unwrap Text' : 'Wrap Text';
+        }
+
+        function toggleStreamView(id) {
+            const entry = document.getElementById(`log-${id}`);
+            if (!entry) return;
+            
+            entry._viewMode = entry._viewMode === 'clean' ? 'raw' : 'clean';
+            createLogEntry(entry._log);
+        }
     </script>
 </body>
 </html>

@@ -63,7 +63,16 @@ async function startServer() {
   // Register helpers
   handlebars.registerHelper('json', (context) => JSON.stringify(context));
   handlebars.registerHelper('gt', (a, b) => a > b);
+  handlebars.registerHelper('or', (a, b) => a || b);
   handlebars.registerHelper('number', (num) => num ? num.toLocaleString() : 0);
+  handlebars.registerHelper('bytes', (bytes) => {
+    if (bytes === 0) return '0 B';
+    if (!bytes) return 'N/A';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  });
 
   // Support any content type by parsing as JSON or raw
   app.addContentTypeParser('*', (request, payload, done) => {
@@ -111,6 +120,7 @@ async function startServer() {
       model,
       userAgent: request.userAgent,
       input_tokens: estimateTokens(inputText),
+      request_size: request.body ? Buffer.byteLength(typeof request.body === 'string' ? request.body : JSON.stringify(request.body)) : 0,
       body: formattedBody
     });
 
@@ -161,6 +171,7 @@ async function startServer() {
             duration_ms: Date.now() - request.startTime,
             userAgent: request.userAgent,
             output_tokens: estimateTokens(capturedResponse),
+            response_size: Buffer.byteLength(capturedResponse),
             response: capturedResponse,
             isStream: true,
             type: 'response' // Reset to response on completion
@@ -209,6 +220,7 @@ async function startServer() {
           duration_ms: duration,
           userAgent: request.userAgent,
           output_tokens: estimateTokens(responseBody),
+          response_size: Buffer.byteLength(responseBody),
           response: formattedResponse
         });
         reply.status(proxyRes.statusCode).headers(proxyRes.headers).send(responseBody);
