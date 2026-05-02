@@ -76,6 +76,7 @@ async function startServer() {
   app.addHook('onRequest', (request, reply, done) => {
     request.requestId = uuidv4().slice(0, 8);
     request.startTime = Date.now();
+    request.userAgent = request.headers['user-agent'] || 'Unknown';
     done();
   });
 
@@ -102,6 +103,7 @@ async function startServer() {
       method: request.method,
       path: request.url,
       model,
+      userAgent: request.userAgent,
       input_tokens: estimateTokens(inputText),
       body: formattedBody
     });
@@ -134,6 +136,7 @@ async function startServer() {
             path: request.url,
             statusCode: proxyRes.statusCode,
             duration_ms: Date.now() - request.startTime,
+            userAgent: request.userAgent,
             isStream: true
           });
         });
@@ -163,6 +166,7 @@ async function startServer() {
           path: request.url,
           statusCode: proxyRes.statusCode,
           duration_ms: duration,
+          userAgent: request.userAgent,
           output_tokens: estimateTokens(responseBody),
           response: formattedResponse
         });
