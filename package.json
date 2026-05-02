@@ -1,0 +1,15 @@
+{
+  "name": "ollama-logging-gateway",
+  "version": "1.0.0",
+  "description": "Ollama gateway with request/response logging and token estimation",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "fastify": "^4.28.1",
+    "gpt-tokenizer": "^3.0.1",
+    "pino-pretty": "^13.1.3",
+    "uuid": "^9.0.0"
+  }
+}

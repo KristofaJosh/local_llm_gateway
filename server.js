@@ -1,0 +1,185 @@
+const fastify = require('fastify');
+const tokenizer = require('gpt-tokenizer');
+const http = require('http');
+const { v4: uuidv4 } = require('uuid');
+const trafficLogger = require('./lib/logger');
+const OllamaManager = require('./lib/ollama');
+
+const CONFIG = {
+  OLLAMA_HOST: '127.0.0.1',
+  OLLAMA_PORT: 11434,
+  GATEWAY_PORT: 11435,
+  BODY_LIMIT: 50 * 1024 * 1024, // 50MB limit for large prompts/images
+  TIMEOUT: 300000 // 5-minute timeout for long generations
+};
+
+/**
+ * Estimates token count for given text or object.
+ */
+function estimateTokens(text) {
+  try {
+    if (!text) return 0;
+    const content = typeof text === 'string' ? text : JSON.stringify(text);
+    return tokenizer.encode(content).length;
+  } catch (e) {
+    return 0;
+  }
+}
+
+async function startServer() {
+  const ollama = new OllamaManager({
+    host: CONFIG.OLLAMA_HOST,
+    port: CONFIG.OLLAMA_PORT
+  });
+
+  // Start Ollama child process
+  ollama.start();
+
+  const app = fastify({
+    bodyLimit: CONFIG.BODY_LIMIT,
+    trustProxy: true,
+    logger: false // Hide Fastify's internal logs
+  });
+
+  // Support any content type by parsing as JSON or raw
+  app.addContentTypeParser('*', (request, payload, done) => {
+    let body = '';
+    payload.on('data', chunk => { body += chunk.toString(); });
+    payload.on('end', () => {
+      try {
+        done(null, body ? JSON.parse(body) : {});
+      } catch (e) {
+        done(null, body);
+      }
+    });
+  });
+
+  // Middleware to track request ID and start time
+  app.addHook('onRequest', (request, reply, done) => {
+    request.requestId = uuidv4().slice(0, 8);
+    request.startTime = Date.now();
+    done();
+  });
+
+  // Health check
+  app.get('/health', async () => ({ status: 'ok' }));
+
+  // Proxy logic
+  app.all('*', (request, reply) => {
+    const model = request.body?.model || 'unknown';
+    const inputText = request.body?.prompt || request.body?.messages || request.body;
+    
+    let formattedBody = request.body;
+    try {
+      if (request.body && typeof request.body === 'object') {
+        formattedBody = JSON.stringify(request.body, null, 2);
+      }
+    } catch (e) {
+      // Keep as is
+    }
+
+    // Log the incoming request details
+    trafficLogger.request({
+      id: request.requestId,
+      method: request.method,
+      path: request.url,
+      model,
+      input_tokens: estimateTokens(inputText),
+      body: formattedBody
+    });
+
+    // Prepare proxy request options
+    const options = {
+      hostname: CONFIG.OLLAMA_HOST,
+      port: CONFIG.OLLAMA_PORT,
+      path: request.url,
+      method: request.method,
+      headers: {
+        ...request.headers,
+        host: `${CONFIG.OLLAMA_HOST}:${CONFIG.OLLAMA_PORT}`
+      }
+    };
+
+    const proxyReq = http.request(options, (proxyRes) => {
+      const isStream = proxyRes.headers['content-type']?.includes('text/event-stream');
+
+      // Handle streaming responses (Server-Sent Events)
+      if (isStream) {
+        reply.raw.writeHead(proxyRes.statusCode, proxyRes.headers);
+        proxyRes.pipe(reply.raw);
+        
+        proxyRes.on('end', () => {
+          // Log completion of the stream
+          trafficLogger.response({
+            id: request.requestId,
+            method: request.method,
+            path: request.url,
+            statusCode: proxyRes.statusCode,
+            duration_ms: Date.now() - request.startTime,
+            isStream: true
+          });
+        });
+        return;
+      }
+
+      // Handle standard (non-streaming) responses
+      let responseBody = '';
+      proxyRes.on('data', (chunk) => { responseBody += chunk.toString(); });
+      proxyRes.on('end', () => {
+        const duration = Date.now() - request.startTime;
+        // Log final response metadata and token count
+        let formattedResponse = responseBody;
+        try {
+          // Attempt to pretty-print if it's JSON
+          formattedResponse = JSON.stringify(JSON.parse(responseBody), null, 2);
+        } catch (e) {
+          // Fallback to original or sliced string if not JSON
+          if (responseBody.length > 1000) {
+            formattedResponse = `${responseBody.slice(0, 1000)}...`;
+          }
+        }
+
+        trafficLogger.response({
+          id: request.requestId,
+          method: request.method,
+          path: request.url,
+          statusCode: proxyRes.statusCode,
+          duration_ms: duration,
+          output_tokens: estimateTokens(responseBody),
+          response: formattedResponse
+        });
+        reply.status(proxyRes.statusCode).headers(proxyRes.headers).send(responseBody);
+      });
+    });
+
+    proxyReq.on('error', (err) => {
+      trafficLogger.error('Proxy error', err);
+      reply.status(502).send({ error: 'Bad Gateway', message: err.message });
+    });
+
+    proxyReq.setTimeout(CONFIG.TIMEOUT, () => {
+      proxyReq.destroy(new Error('Upstream timeout'));
+    });
+
+    // Write request body if present
+    if (request.body && (typeof request.body === 'object' ? Object.keys(request.body).length > 0 : request.body.length > 0)) {
+      proxyReq.write(typeof request.body === 'string' ? request.body : JSON.stringify(request.body));
+    }
+    proxyReq.end();
+  });
+
+
+  try {
+    await ollama.waitForReady();
+    // Optional warmup can be done in background
+    ollama.warmup().catch(() => {});
+
+    await app.listen({ port: CONFIG.GATEWAY_PORT, host: '0.0.0.0' });
+    console.log(`\x1b[32m[SERVER]\x1b[0m Sharing Ollama on port ${CONFIG.GATEWAY_PORT}`);
+  } catch (err) {
+    trafficLogger.error('Failed to start server', err);
+    process.exit(1);
+  }
+}
+
+startServer();
