@@ -63,6 +63,7 @@ async function startServer() {
   // Register helpers
   handlebars.registerHelper('json', (context) => JSON.stringify(context));
   handlebars.registerHelper('gt', (a, b) => a > b);
+  handlebars.registerHelper('number', (num) => num ? num.toLocaleString() : 0);
 
   // Support any content type by parsing as JSON or raw
   app.addContentTypeParser('*', (request, payload, done) => {

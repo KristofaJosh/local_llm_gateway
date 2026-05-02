@@ -633,10 +633,10 @@
         }
 
         function updateStats() {
-            document.getElementById('stat-requests').textContent = stats.requests;
+            document.getElementById('stat-requests').textContent = stats.requests.toLocaleString();
             const avgLatency = stats.responses > 0 ? Math.round(stats.totalLatency / stats.responses) : 0;
             document.getElementById('stat-latency').textContent = formatDuration(avgLatency);
-            document.getElementById('stat-tokens').textContent = stats.inTokens + ' / ' + stats.outTokens;
+            document.getElementById('stat-tokens').textContent = stats.inTokens.toLocaleString() + ' / ' + stats.outTokens.toLocaleString();
         }
 
         function formatDuration(ms) {
@@ -728,12 +728,12 @@
                         ${currentLog.input_tokens ? `
                         <div class="detail-item">
                             <label>Input Tokens</label>
-                            <div class="detail-value">${currentLog.input_tokens}</div>
+                            <div class="detail-value">${currentLog.input_tokens.toLocaleString()}</div>
                         </div>` : ''}
                         ${currentLog.output_tokens ? `
                         <div class="detail-item">
                             <label>Output Tokens</label>
-                            <div class="detail-value">${currentLog.output_tokens}</div>
+                            <div class="detail-value">${currentLog.output_tokens.toLocaleString()}</div>
                         </div>` : ''}
                         ${currentLog.statusCode ? `
                         <div class="detail-item">
