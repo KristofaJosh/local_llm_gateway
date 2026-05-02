@@ -132,10 +132,27 @@ async function startServer() {
       // Handle streaming responses (Server-Sent Events)
       if (isStream) {
         reply.raw.writeHead(proxyRes.statusCode, proxyRes.headers);
+        
+        let capturedResponse = '';
+        proxyRes.on('data', (chunk) => {
+          capturedResponse += chunk.toString();
+        });
+
         proxyRes.pipe(reply.raw);
         
+        // Log that the response has started (helpful for UI to show "Streaming" status)
+        trafficLogger.response({
+          id: request.requestId,
+          method: request.method,
+          path: request.url,
+          statusCode: proxyRes.statusCode,
+          userAgent: request.userAgent,
+          isStream: true,
+          type: 'streaming' // Custom type to indicate active stream
+        });
+
         proxyRes.on('end', () => {
-          // Log completion of the stream
+          // Log completion of the stream with the captured body
           trafficLogger.response({
             id: request.requestId,
             method: request.method,
@@ -143,7 +160,10 @@ async function startServer() {
             statusCode: proxyRes.statusCode,
             duration_ms: Date.now() - request.startTime,
             userAgent: request.userAgent,
-            isStream: true
+            output_tokens: estimateTokens(capturedResponse),
+            response: capturedResponse,
+            isStream: true,
+            type: 'response' // Reset to response on completion
           });
         });
         return;

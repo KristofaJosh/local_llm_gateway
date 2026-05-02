@@ -152,9 +152,20 @@
             border-radius: 4px;
         }
 
-        .badge-request { background: rgba(59, 130, 246, 0.15); color: var(--request); }
-        .badge-response { background: rgba(16, 185, 129, 0.15); color: var(--response); }
-        .badge-error { background: rgba(239, 68, 68, 0.15); color: var(--error); }
+        .badge-pending { background: rgba(59, 130, 246, 0.15); color: var(--request); }
+        .badge-streaming { 
+            background: rgba(168, 85, 247, 0.15); 
+            color: #a855f7; 
+            animation: streamingPulse 2s infinite;
+        }
+        .badge-completed { background: rgba(16, 185, 129, 0.15); color: var(--response); }
+        .badge-failed { background: rgba(239, 68, 68, 0.15); color: var(--error); }
+
+        @keyframes streamingPulse {
+            0% { opacity: 0.8; }
+            50% { opacity: 1; transform: scale(1.05); }
+            100% { opacity: 0.8; }
+        }
 
         .method { font-family: 'JetBrains Mono', monospace; font-weight: 600; color: var(--text-muted); font-size: 0.8rem; }
         .path { font-family: 'JetBrains Mono', monospace; font-weight: 500; font-size: 0.8rem; }
@@ -688,11 +699,26 @@
             }
             
             const currentLog = entry._log;
-            const isResponse = currentLog.statusCode !== undefined || currentLog.type === 'response';
+            const isStreaming = currentLog.type === 'streaming';
+            const isResponse = currentLog.type === 'response' || currentLog.statusCode !== undefined;
             const isError = currentLog.statusCode >= 400;
             
-            const badgeClass = isResponse ? (isError ? 'badge-error' : 'badge-response') : 'badge-request';
-            const badgeText = isResponse ? 'Response' : 'Request';
+            let badgeClass = 'badge-pending';
+            let badgeText = 'Pending';
+            
+            if (isStreaming) {
+                badgeClass = 'badge-streaming';
+                badgeText = 'Streaming';
+            } else if (isResponse) {
+                if (isError) {
+                    badgeClass = 'badge-failed';
+                    badgeText = 'Failed';
+                } else {
+                    badgeClass = 'badge-completed';
+                    badgeText = 'Completed';
+                }
+            }
+
             const deviceName = getFriendlyName(currentLog.userAgent, currentLog.id);
             const headerLabel = deviceName || `[${currentLog.id}]`;
 
@@ -705,7 +731,9 @@
                         <span class="path">${currentLog.path}</span>
                     </div>
                     <div class="time" style="display: flex; align-items: center; gap: 0.75rem;">
+                        ${currentLog.statusCode ? `<span class="${isError ? 'badge-error' : 'badge-response'}" style="font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; font-weight: 700;">${currentLog.statusCode}</span> • ` : ''}
                         ${isResponse && currentLog.duration_ms ? `<span>${formatDuration(currentLog.duration_ms)}</span> • ` : ''}
+                        ${isStreaming ? '<span style="color: #a855f7; font-size: 0.7rem; font-weight: 600;">ACTIVE</span> • ' : ''}
                         ${new Date(currentLog.timestamp).toLocaleTimeString()}
                         <a href="/dashboard/${currentLog.id}" onclick="event.stopPropagation()" class="btn-detail">
                             Details
@@ -781,9 +809,6 @@
                 } else {
                     logContainer.appendChild(entry);
                 }
-            } else if (log.type === 'response') {
-                // Move to top when response arrives
-                logContainer.insertBefore(entry, logContainer.firstChild);
             }
 
             // Update stats

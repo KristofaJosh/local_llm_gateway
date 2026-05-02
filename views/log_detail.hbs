@@ -143,9 +143,9 @@
             text-transform: uppercase;
         }
 
-        .badge-request { background: rgba(47, 129, 247, 0.15); color: var(--request); }
-        .badge-response { background: rgba(35, 134, 54, 0.15); color: var(--response); }
-        .badge-error { background: rgba(218, 54, 51, 0.15); color: var(--error); }
+        .badge-pending { background: rgba(47, 129, 247, 0.15); color: var(--request); }
+        .badge-completed { background: rgba(35, 134, 54, 0.15); color: var(--response); }
+        .badge-failed { background: rgba(218, 54, 51, 0.15); color: var(--error); }
 
         .json-tree { 
             font-family: 'JetBrains Mono', monospace; 
@@ -313,8 +313,8 @@
                 <div class="meta-item">
                     <div class="meta-label">Status</div>
                     <div class="meta-value">
-                        <span class="badge {{#if log.statusCode}}{{#if (gt log.statusCode 399)}}badge-error{{else}}badge-response{{/if}}{{else}}badge-request{{/if}}">
-                            {{#if log.statusCode}}{{log.statusCode}}{{else}}Pending{{/if}}
+                        <span class="badge {{#if log.statusCode}}{{#if (gt log.statusCode 399)}}badge-failed{{else}}badge-completed{{/if}}{{else}}badge-pending{{/if}}">
+                            {{#if log.statusCode}}{{#if (gt log.statusCode 399)}}Failed{{else}}Completed{{/if}}{{else}}Pending{{/if}}
                         </span>
                     </div>
                 </div>
