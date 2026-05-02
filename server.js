@@ -1,14 +1,16 @@
-const fastify = require('fastify');
-const tokenizer = require('gpt-tokenizer');
-const http = require('http');
-const { v4: uuidv4 } = require('uuid');
-const trafficLogger = require('./lib/logger');
-const OllamaManager = require('./lib/ollama');
+import 'dotenv/config';
+import fastify from 'fastify';
+import tokenizer from 'gpt-tokenizer';
+import http from 'http';
+import { v4 as uuidv4 } from 'uuid';
+import trafficLogger from './lib/logger.js';
+import OllamaManager from './lib/ollama.js';
 
 const CONFIG = {
-  OLLAMA_HOST: '127.0.0.1',
-  OLLAMA_PORT: 11434,
-  GATEWAY_PORT: 11435,
+  OLLAMA_HOST: process.env.OLLAMA_HOST || '127.0.0.1',
+  OLLAMA_PORT: parseInt(process.env.OLLAMA_PORT || '11434'),
+  GATEWAY_PORT: parseInt(process.env.GATEWAY_PORT || '11435'),
+  OLLAMA_KEEP_ALIVE: process.env.OLLAMA_KEEP_ALIVE || '5m',
   BODY_LIMIT: 50 * 1024 * 1024, // 50MB limit for large prompts/images
   TIMEOUT: 300000 // 5-minute timeout for long generations
 };
@@ -29,7 +31,8 @@ function estimateTokens(text) {
 async function startServer() {
   const ollama = new OllamaManager({
     host: CONFIG.OLLAMA_HOST,
-    port: CONFIG.OLLAMA_PORT
+    port: CONFIG.OLLAMA_PORT,
+    keepAlive: CONFIG.OLLAMA_KEEP_ALIVE
   });
 
   // Start Ollama child process
@@ -167,7 +170,6 @@ async function startServer() {
     }
     proxyReq.end();
   });
-
 
   try {
     await ollama.waitForReady();

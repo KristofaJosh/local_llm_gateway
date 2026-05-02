@@ -15,9 +15,19 @@ cd ollama_share
 npm install
 ```
 
-### 3. Start the Server
+### 3. Configuration
+Rename `.env.example` to `.env` and adjust settings if needed:
 ```bash
+cp .env.example .env
+```
+
+### 4. Start the Server
+```bash
+# For production
 npm start
+
+# For development (with auto-restart)
+npm run dev
 ```
 The server will:
 1. Automatically start the `ollama serve` process.
