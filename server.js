@@ -200,9 +200,7 @@ async function startServer() {
 
   app.get('/dashboard/:id', (request, reply) => {
     const { id } = request.params;
-    const history = trafficLogger.getHistory();
-    // Find all entries for this ID (request and response)
-    const entries = history.filter(log => log.id === id);
+    const entries = trafficLogger.getById(id);
     
     if (entries.length === 0) {
       return reply.status(404).send({ error: 'Log not found' });
