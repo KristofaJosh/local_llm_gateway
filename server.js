@@ -18,6 +18,7 @@ const CONFIG = {
   OLLAMA_PORT: parseInt(process.env.OLLAMA_PORT || '11434'),
   GATEWAY_PORT: parseInt(process.env.GATEWAY_PORT || '11435'),
   OLLAMA_KEEP_ALIVE: process.env.OLLAMA_KEEP_ALIVE || '5m',
+  GATEWAY_NAME: process.env.GATEWAY_NAME || 'ollama gateway',
   BODY_LIMIT: 50 * 1024 * 1024, // 50MB limit for large prompts/images
   TIMEOUT: 300000 // 5-minute timeout for long generations
 };
@@ -210,7 +211,16 @@ async function startServer() {
   });
 
   app.get('/dashboard', (request, reply) => {
-    return reply.view('dashboard.hbs');
+    return reply.view('dashboard.hbs', { gatewayName: CONFIG.GATEWAY_NAME });
+  });
+
+  app.post('/logs/clear', async (request, reply) => {
+    const success = trafficLogger.clearLogs();
+    if (success) {
+      return reply.send({ success: true });
+    } else {
+      return reply.status(500).send({ error: 'Failed to clear logs' });
+    }
   });
 
   app.get('/dashboard/:id', (request, reply) => {
@@ -224,7 +234,7 @@ async function startServer() {
     // Merge them for a unified view
     const log = entries.reduce((acc, curr) => ({ ...acc, ...curr }), {});
     
-    return reply.view('log_detail.hbs', { log });
+    return reply.view('log_detail.hbs', { log, gatewayName: CONFIG.GATEWAY_NAME });
   });
 
   app.get('/logs/stream', (request, reply) => {
