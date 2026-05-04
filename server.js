@@ -51,7 +51,9 @@ async function startServer() {
   const app = fastify({
     bodyLimit: CONFIG.BODY_LIMIT,
     trustProxy: true,
-    logger: false // Hide Fastify's internal logs
+    logger: false, // Hide Fastify's internal logs
+    connectionTimeout: 0, // Disable connection timeout for long generations
+    keepAliveTimeout: 300000 // 5 minutes keep-alive
   });
 
   // Register view engine
@@ -271,24 +273,37 @@ async function startServer() {
               }
               
               try {
+                // Handle various formats of streamed JSON (OpenAI vs Ollama)
                 const data = JSON.parse(jsonStr);
-                const messageObj = data.message || (data.choices && data.choices[0]?.delta);
+                const messageObj = data.message || (data.choices && data.choices[0]?.delta) || (data.choices && data.choices[0]?.message);
                 
                 if (messageObj?.tool_calls) {
                   messageObj.tool_calls.forEach(tc => {
+                    // Find or create tool call entry
+                    let existingTc = null;
+                    if (tc.index !== undefined) {
+                      existingTc = fullMessage.tool_calls[tc.index];
+                      if (!existingTc) {
+                        existingTc = { function: { name: '', arguments: '' } };
+                        fullMessage.tool_calls[tc.index] = existingTc;
+                      }
+                    } else {
+                      existingTc = fullMessage.tool_calls.find(t => t.function.name === tc.function?.name);
+                    }
+
                     if (tc.function) {
-                      const existingTc = fullMessage.tool_calls.find(t => t.function.name === tc.function.name) || (tc.index !== undefined ? fullMessage.tool_calls[tc.index] : null);
-                      if (existingTc) {
-                        if (tc.function.arguments) {
+                      if (tc.function.name) existingTc ? existingTc.function.name = tc.function.name : null;
+                      if (tc.function.arguments) {
+                        if (existingTc) {
                           existingTc.function.arguments += tc.function.arguments;
+                        } else {
+                          fullMessage.tool_calls.push({
+                            function: {
+                              name: tc.function.name,
+                              arguments: tc.function.arguments
+                            }
+                          });
                         }
-                      } else {
-                        fullMessage.tool_calls.push({
-                          function: {
-                            name: tc.function.name,
-                            arguments: tc.function.arguments || ''
-                          }
-                        });
                       }
                     }
                   });
@@ -296,8 +311,13 @@ async function startServer() {
                 if (messageObj?.content) {
                   fullMessage.content += messageObj.content;
                 }
-              } catch (e) {}
+              } catch (e) {
+                // If it's not JSON, it might be a raw part of the stream, skip but don't break
+              }
             }
+            
+            // Clean up empty tool call slots if any
+            fullMessage.tool_calls = fullMessage.tool_calls.filter(tc => tc && tc.function.name);
 
             if (fullMessage.tool_calls.length > 0 && !request.raw.aborted) {
               try {
@@ -318,23 +338,36 @@ async function startServer() {
                   capturedResponse += chunkStr;
                 }
                 
-                await executeToolCalls(fullMessage.tool_calls, CONFIG, (chunk) => {
-                  if (request.raw.aborted) return;
-                  const streamChunkObj = isSSE 
-                    ? { choices: [{ delta: { content: chunk } }] }
-                    : { message: { content: chunk } };
-                  const streamChunk = JSON.stringify(streamChunkObj);
-                  const chunkStr = isSSE ? `data: ${streamChunk}\n\n` : `${streamChunk}\n`;
-                  reply.raw.write(chunkStr);
-                  capturedResponse += chunkStr;
-                });
+                // Use a heartbeat to keep the connection alive while the tool is executing
+                const heartbeat = setInterval(() => {
+                  if (!request.raw.aborted) {
+                    reply.raw.write(isSSE ? ':\n\n' : '\n');
+                  }
+                }, 10000);
+                
+                try {
+                  await executeToolCalls(fullMessage.tool_calls, CONFIG, (chunk) => {
+                    if (request.raw.aborted) return;
+                    const streamChunkObj = isSSE 
+                      ? { choices: [{ delta: { content: chunk } }] }
+                      : { message: { content: chunk } };
+                    const streamChunk = JSON.stringify(streamChunkObj);
+                    const chunkStr = isSSE ? `data: ${streamChunk}\n\n` : `${streamChunk}\n`;
+                    reply.raw.write(chunkStr);
+                    capturedResponse += chunkStr;
+                  });
+                } finally {
+                  clearInterval(heartbeat);
+                }
                 
                 if (!request.raw.aborted) {
                   const responseObj = { model: request.body?.model, done: true };
                   if (isSSE) responseObj.choices = [{ delta: {}, finish_reason: 'stop' }];
                   
                   const finalChunk = JSON.stringify(responseObj);
-                  reply.raw.write(isSSE ? `data: ${finalChunk}\n\n` : `${finalChunk}\n`);
+                  const finalChunkStr = isSSE ? `data: ${finalChunk}\n\n` : `${finalChunk}\n`;
+                  reply.raw.write(finalChunkStr);
+                  capturedResponse += finalChunkStr;
                 }
               } catch (err) {
                 console.error("Tool execution error:", err);
