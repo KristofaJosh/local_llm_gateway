@@ -722,7 +722,10 @@
                         const jsonPart = sseMatch ? sseMatch[1] : l;
                         try {
                             const parsed = JSON.parse(jsonPart);
-                            return parsed.message?.content || parsed.response || '';
+                            return parsed.message?.content || 
+                                   parsed.response || 
+                                   (parsed.choices && parsed.choices[0]?.delta?.content) || 
+                                   '';
                         } catch (e) {
                             return '';
                         }

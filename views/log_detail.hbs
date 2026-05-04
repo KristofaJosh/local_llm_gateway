@@ -520,11 +520,16 @@
                         const jsonPart = sseMatch ? sseMatch[1] : l;
                         try {
                             const parsed = JSON.parse(jsonPart);
-                            return parsed.message?.content || parsed.response || '';
+                            return parsed.message?.content || 
+                                   parsed.response || 
+                                   (parsed.choices && parsed.choices[0]?.delta?.content) || 
+                                   '';
                         } catch (e) {
                             return '';
                         }
-                    }).join('');
+                    })
+                    .filter(Boolean)
+                    .join('');
             } catch (e) {
                 return raw;
             }
@@ -536,11 +541,18 @@
             isRawMode = !isRawMode;
             btn.textContent = isRawMode ? 'Clean View' : 'Raw View';
             
+            const responseData = document.getElementById('response-data');
             if (isRawMode) {
-                document.getElementById('response-data').innerHTML = renderRecursive(log.response, true);
+                // Raw view: show json shape (formatted raw response)
+                responseData.innerHTML = renderRecursive(log.response, true);
             } else {
+                // Clean view: show final streamed content
                 const cleaned = parseStream(log.response);
-                document.getElementById('response-data').innerHTML = renderRecursive(cleaned, false);
+                if (!cleaned) {
+                    responseData.innerHTML = '<div class="json-tree" style="color: var(--text-muted)">No stream content available</div>';
+                } else {
+                    responseData.innerHTML = renderRecursive(cleaned, false);
+                }
             }
         }
 
