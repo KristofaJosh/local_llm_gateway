@@ -9,6 +9,7 @@ import http from 'http';
 import { v4 as uuidv4 } from 'uuid';
 import trafficLogger from './lib/logger.js';
 import OllamaManager from './lib/ollama.js';
+import { executeToolCalls } from './lib/tools.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,7 +21,8 @@ const CONFIG = {
   OLLAMA_KEEP_ALIVE: process.env.OLLAMA_KEEP_ALIVE || '5m',
   GATEWAY_NAME: process.env.GATEWAY_NAME || 'ollama gateway',
   BODY_LIMIT: 500 * 1024 * 1024, // 500MB limit for large prompts/images
-  TIMEOUT: 300000 // 5-minute timeout for long generations
+  TIMEOUT: 300000, // 5-minute timeout for long generations
+  IMAGE_MODEL: process.env.IMAGE_MODEL || 'x/flux2-klein:9b'
 };
 
 /**
@@ -101,6 +103,37 @@ async function startServer() {
 
   // Proxy logic
   app.all('*', (request, reply) => {
+    // Inject the generate_image tool into chat requests if IMAGE_MODEL is configured
+    const isChatRequest = request.url.includes('/api/chat') || request.url.includes('/v1/chat/completions');
+    if (isChatRequest && request.body && typeof request.body === 'object') {
+      if (CONFIG.IMAGE_MODEL) {
+        if (!request.body.tools) {
+          request.body.tools = [];
+        }
+        
+        const hasImageTool = request.body.tools.some(t => t.function?.name === 'generate_image');
+        if (!hasImageTool) {
+          request.body.tools.push({
+            type: "function",
+            function: {
+              name: "generate_image",
+              description: "Use this tool to generate an image whenever the user asks for a picture, drawing, or photograph.",
+              parameters: {
+                type: "object",
+                properties: {
+                  prompt: {
+                    type: "string",
+                    description: "A highly detailed visual description of the image to generate based on the user's request."
+                  }
+                },
+                required: ["prompt"]
+              }
+            }
+          });
+        }
+      }
+    }
+
     const model = request.body?.model || 'unknown';
     const inputText = request.body?.prompt || request.body?.messages || request.body;
     
@@ -152,32 +185,129 @@ async function startServer() {
     };
 
     const proxyReq = http.request(options, (proxyRes) => {
-      const isStream = proxyRes.headers['content-type']?.includes('text/event-stream');
+      const contentType = proxyRes.headers['content-type'] || '';
+      const isStream = contentType.includes('text/event-stream') || contentType.includes('application/x-ndjson') || contentType.includes('application/jsonl');
 
-      // Handle streaming responses (Server-Sent Events)
+      // Handle streaming responses (Server-Sent Events and NDJSON)
       if (isStream) {
-        reply.raw.writeHead(proxyRes.statusCode, proxyRes.headers);
-        
         let capturedResponse = '';
+        let isToolCallStream = false;
+        let toolCallBuffer = '';
+        let headerWritten = false;
+
         proxyRes.on('data', (chunk) => {
-          capturedResponse += chunk.toString();
+          const chunkStr = chunk.toString();
+          capturedResponse += chunkStr;
+          
+          // Detect if this stream chunk contains a tool call
+          if (chunkStr.includes('"tool_calls"') || isToolCallStream) {
+            isToolCallStream = true;
+            toolCallBuffer += chunkStr;
+            // Do NOT write these chunks to the client yet
+          } else {
+            if (!headerWritten) {
+              reply.raw.writeHead(proxyRes.statusCode, proxyRes.headers);
+              headerWritten = true;
+            }
+            reply.raw.write(chunk);
+          }
         });
 
-        proxyRes.pipe(reply.raw);
-        
-        // Log that the response has started (helpful for UI to show "Streaming" status)
-        trafficLogger.response({
-          id: request.requestId,
-          method: request.method,
-          path: request.url,
-          statusCode: proxyRes.statusCode,
-          userAgent: request.userAgent,
-          isStream: true,
-          type: 'streaming' // Custom type to indicate active stream
-        });
+        proxyRes.on('end', async () => {
+          if (isToolCallStream) {
+            // Reconstruct the JSON from the stream chunks to extract the tool calls
+            const lines = toolCallBuffer.split('\n');
+            let fullMessage = { tool_calls: [], content: '' };
+            
+            for (const line of lines) {
+              const trimmedLine = line.trim();
+              if (!trimmedLine) continue;
+              
+              let jsonStr = trimmedLine;
+              let isSSE = false;
+              if (trimmedLine.startsWith('data: ')) {
+                jsonStr = trimmedLine.slice(6);
+                isSSE = true;
+                if (jsonStr === '[DONE]') continue;
+              }
+              
+              try {
+                const data = JSON.parse(jsonStr);
+                
+                // Ollama Native and OpenAI structure differences
+                const messageObj = data.message || (data.choices && data.choices[0]?.delta);
+                
+                if (messageObj?.tool_calls) {
+                  // Merge tool calls (some streams send them incrementally)
+                  messageObj.tool_calls.forEach(tc => {
+                    if (tc.function) {
+                      const existingTc = fullMessage.tool_calls.find(t => t.function.name === tc.function.name) || (tc.index !== undefined ? fullMessage.tool_calls[tc.index] : null);
+                      if (existingTc) {
+                        if (tc.function.arguments) {
+                          existingTc.function.arguments += tc.function.arguments;
+                        }
+                      } else {
+                        fullMessage.tool_calls.push({
+                          function: {
+                            name: tc.function.name,
+                            arguments: tc.function.arguments || ''
+                          }
+                        });
+                      }
+                    }
+                  });
+                }
+                if (messageObj?.content) {
+                  fullMessage.content += messageObj.content;
+                }
+              } catch (e) {}
+            }
 
-        proxyRes.on('end', () => {
-          // Log completion of the stream with the captured body
+            if (fullMessage.tool_calls.length > 0) {
+              try {
+                // Execute the tool and get the Markdown image!
+                const markdownImage = await executeToolCalls(fullMessage.tool_calls, CONFIG);
+                
+                // Stream the markdown back to the client as a single chunk
+                if (!headerWritten) {
+                  reply.raw.writeHead(200, { 'Content-Type': contentType });
+                  headerWritten = true;
+                }
+                
+                const finalContent = fullMessage.content + markdownImage;
+                
+                // Format the chunk appropriately based on original content type
+                const isSSE = contentType.includes('text/event-stream');
+                
+                const responseObj = {
+                  model: request.body?.model,
+                  done: true
+                };
+                if (isSSE) {
+                  responseObj.choices = [{ delta: { role: 'assistant', content: finalContent } }];
+                } else {
+                  responseObj.message = { role: 'assistant', content: finalContent };
+                }
+                
+                const finalChunk = JSON.stringify(responseObj);
+                if (isSSE) {
+                  reply.raw.write(`data: ${finalChunk}\n\n`);
+                } else {
+                  reply.raw.write(`${finalChunk}\n`);
+                }
+                capturedResponse += finalContent; // Update for logging
+              } catch (err) {
+                console.error("Tool execution error:", err);
+              }
+            }
+          }
+          
+          if (!headerWritten) {
+            reply.raw.writeHead(proxyRes.statusCode, proxyRes.headers);
+          }
+          reply.raw.end();
+          
+          // Log completion of the stream
           trafficLogger.response({
             id: request.requestId,
             method: request.method,
@@ -198,10 +328,24 @@ async function startServer() {
       // Handle standard (non-streaming) responses
       let responseBody = '';
       proxyRes.on('data', (chunk) => { responseBody += chunk.toString(); });
-      proxyRes.on('end', () => {
+      proxyRes.on('end', async () => {
+        let finalResponseString = responseBody;
+        
+        // Intercept Tool Calls for non-streaming
+        try {
+          const parsedRes = JSON.parse(responseBody);
+          if (parsedRes.message?.tool_calls) {
+            const markdownImage = await executeToolCalls(parsedRes.message.tool_calls, CONFIG);
+            // Append the actual image markdown to any existing conversational text
+            parsedRes.message.content = (parsedRes.message.content || '') + markdownImage;
+            delete parsedRes.message.tool_calls;
+            finalResponseString = JSON.stringify(parsedRes);
+          }
+        } catch (e) {}
+
         const duration = Date.now() - request.startTime;
         // Log final response metadata and token count
-        let formattedResponse = responseBody;
+        let formattedResponse = finalResponseString;
         try {
           // Attempt to pretty-print if it's JSON
           formattedResponse = JSON.stringify(JSON.parse(responseBody), null, 2);
@@ -238,7 +382,7 @@ async function startServer() {
           response_size: Buffer.byteLength(responseBody),
           response: formattedResponse
         });
-        reply.status(proxyRes.statusCode).headers(proxyRes.headers).send(responseBody);
+        reply.status(proxyRes.statusCode).headers(proxyRes.headers).send(finalResponseString);
       });
     });
 
