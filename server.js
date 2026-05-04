@@ -10,6 +10,7 @@ import { v4 as uuidv4 } from 'uuid';
 import trafficLogger from './lib/logger.js';
 import OllamaManager from './lib/ollama.js';
 import { executeToolCalls } from './lib/tools.js';
+import db from './lib/db.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -338,6 +339,12 @@ async function startServer() {
                   capturedResponse += chunkStr;
                 }
                 
+                // Pass dynamic configuration to tools
+                const toolConfig = {
+                  ...CONFIG,
+                  BASE_URL: process.env.BASE_URL || `${request.protocol}://${request.headers.host}`
+                };
+                
                 // Use a heartbeat to keep the connection alive while the tool is executing
                 const heartbeat = setInterval(() => {
                   if (!request.raw.aborted) {
@@ -346,7 +353,7 @@ async function startServer() {
                 }, 10000);
                 
                 try {
-                  await executeToolCalls(fullMessage.tool_calls, CONFIG, (chunk) => {
+                  await executeToolCalls(fullMessage.tool_calls, toolConfig, (chunk) => {
                     if (request.raw.aborted) return;
                     const streamChunkObj = isSSE 
                       ? { choices: [{ delta: { content: chunk } }] }
@@ -394,7 +401,11 @@ async function startServer() {
         try {
           const parsedRes = JSON.parse(responseBody);
           if (parsedRes.message?.tool_calls && !request.raw.aborted) {
-            const markdownImage = await executeToolCalls(parsedRes.message.tool_calls, CONFIG);
+            const toolConfig = {
+              ...CONFIG,
+              BASE_URL: process.env.BASE_URL || `${request.protocol}://${request.headers.host}`
+            };
+            const markdownImage = await executeToolCalls(parsedRes.message.tool_calls, toolConfig);
             parsedRes.message.content = (parsedRes.message.content || '') + markdownImage;
             delete parsedRes.message.tool_calls;
             finalResponseString = JSON.stringify(parsedRes);
@@ -460,6 +471,20 @@ async function startServer() {
 
   app.get('/dashboard', (request, reply) => {
     return reply.view('dashboard.hbs', { gatewayName: CONFIG.GATEWAY_NAME });
+  });
+
+  app.get('/images/:id', async (request, reply) => {
+    const { id } = request.params;
+    try {
+      const row = db.prepare('SELECT base64 FROM images WHERE id = ?').get(id);
+      if (!row) {
+        return reply.status(404).send({ error: 'Image not found' });
+      }
+      const buffer = Buffer.from(row.base64, 'base64');
+      reply.type('image/jpeg').send(buffer);
+    } catch (err) {
+      return reply.status(500).send({ error: 'Internal server error' });
+    }
   });
 
   app.post('/logs/clear', async (request, reply) => {
