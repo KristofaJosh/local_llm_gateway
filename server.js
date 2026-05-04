@@ -19,7 +19,7 @@ const CONFIG = {
   GATEWAY_PORT: parseInt(process.env.GATEWAY_PORT || '11435'),
   OLLAMA_KEEP_ALIVE: process.env.OLLAMA_KEEP_ALIVE || '5m',
   GATEWAY_NAME: process.env.GATEWAY_NAME || 'ollama gateway',
-  BODY_LIMIT: 50 * 1024 * 1024, // 50MB limit for large prompts/images
+  BODY_LIMIT: 500 * 1024 * 1024, // 500MB limit for large prompts/images
   TIMEOUT: 300000 // 5-minute timeout for long generations
 };
 
@@ -76,9 +76,10 @@ async function startServer() {
 
   // Support any content type by parsing as JSON or raw
   app.addContentTypeParser('*', (request, payload, done) => {
-    let body = '';
-    payload.on('data', chunk => { body += chunk.toString(); });
+    const chunks = [];
+    payload.on('data', chunk => { chunks.push(chunk); });
     payload.on('end', () => {
+      const body = Buffer.concat(chunks).toString('utf8');
       try {
         done(null, body ? JSON.parse(body) : {});
       } catch (e) {
@@ -112,6 +113,12 @@ async function startServer() {
       // Keep as is
     }
 
+    let proxyBodyString = '';
+    if (request.body && (typeof request.body === 'object' ? Object.keys(request.body).length > 0 : request.body.length > 0)) {
+      proxyBodyString = typeof request.body === 'string' ? request.body : JSON.stringify(request.body);
+    }
+    const requestSize = proxyBodyString ? Buffer.byteLength(proxyBodyString) : 0;
+
     // Log the incoming request details
     trafficLogger.request({
       id: request.requestId,
@@ -120,9 +127,20 @@ async function startServer() {
       model,
       userAgent: request.userAgent,
       input_tokens: estimateTokens(inputText),
-      request_size: request.body ? Buffer.byteLength(typeof request.body === 'string' ? request.body : JSON.stringify(request.body)) : 0,
+      request_size: requestSize,
       body: formattedBody
     });
+
+    const proxyHeaders = {
+      ...request.headers,
+      host: `${CONFIG.OLLAMA_HOST}:${CONFIG.OLLAMA_PORT}`
+    };
+
+    if (proxyBodyString) {
+      proxyHeaders['content-length'] = requestSize.toString();
+    } else {
+      delete proxyHeaders['content-length'];
+    }
 
     // Prepare proxy request options
     const options = {
@@ -130,10 +148,7 @@ async function startServer() {
       port: CONFIG.OLLAMA_PORT,
       path: request.url,
       method: request.method,
-      headers: {
-        ...request.headers,
-        host: `${CONFIG.OLLAMA_HOST}:${CONFIG.OLLAMA_PORT}`
-      }
+      headers: proxyHeaders
     };
 
     const proxyReq = http.request(options, (proxyRes) => {
@@ -237,8 +252,8 @@ async function startServer() {
     });
 
     // Write request body if present
-    if (request.body && (typeof request.body === 'object' ? Object.keys(request.body).length > 0 : request.body.length > 0)) {
-      proxyReq.write(typeof request.body === 'string' ? request.body : JSON.stringify(request.body));
+    if (proxyBodyString) {
+      proxyReq.write(proxyBodyString);
     }
     proxyReq.end();
   });
