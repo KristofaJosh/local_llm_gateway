@@ -167,15 +167,17 @@ async function startServer() {
       body: formattedBody
     });
 
-    const proxyHeaders = {
-      ...request.headers,
-      host: `${CONFIG.OLLAMA_HOST}:${CONFIG.OLLAMA_PORT}`
-    };
+    const proxyHeaders = { ...request.headers };
+    
+    // Set the host to the upstream
+    proxyHeaders.host = `${CONFIG.OLLAMA_HOST}:${CONFIG.OLLAMA_PORT}`;
 
-    // Remove headers that might interfere with proxying or logging
+    // Remove headers that might interfere with proxying, logging, or cause conflicts
     delete proxyHeaders['accept-encoding']; // Force plain text for logging
     delete proxyHeaders['connection'];
     delete proxyHeaders['keep-alive'];
+    delete proxyHeaders['transfer-encoding']; // We are sending a buffered body with content-length
+    delete proxyHeaders['content-encoding']; // We've already parsed/decompressed the body if necessary
 
     if (proxyBodyString) {
       proxyHeaders['content-length'] = requestSize.toString();
@@ -244,7 +246,11 @@ async function startServer() {
           }
           
           // Detect if this stream chunk contains a tool call
-          if (chunkStr.includes('"tool_calls"') || isToolCallStream) {
+          // We look for the "tool_calls" key in the JSON, not just the string anywhere
+          const containsToolCall = chunkStr.includes('"tool_calls"') && 
+                                   (chunkStr.includes('"message"') || chunkStr.includes('"delta"'));
+
+          if (containsToolCall || isToolCallStream) {
             isToolCallStream = true;
             toolCallBuffer += chunkStr;
             // Do NOT write these chunks to the client yet
@@ -320,7 +326,24 @@ async function startServer() {
             // Clean up empty tool call slots if any
             fullMessage.tool_calls = fullMessage.tool_calls.filter(tc => tc && tc.function.name);
 
-            if (fullMessage.tool_calls.length > 0 && !request.raw.aborted) {
+            const ourToolNames = ['generate_image'];
+            const handledTools = fullMessage.tool_calls.filter(tc => ourToolNames.includes(tc.function.name));
+            const unhandledTools = fullMessage.tool_calls.filter(tc => !ourToolNames.includes(tc.function.name));
+
+            // If there are tool calls we don't handle, we MUST flush the buffer so the client can handle them.
+            // Also flush if no tools were actually found in the buffered stream.
+            if (unhandledTools.length > 0 || fullMessage.tool_calls.length === 0) {
+              if (!request.raw.aborted) {
+                if (!headerWritten) {
+                  reply.raw.writeHead(proxyRes.statusCode, proxyRes.headers);
+                  headerWritten = true;
+                }
+                reply.raw.write(toolCallBuffer);
+              }
+            }
+
+            // If there are tool calls we DO handle, execute them.
+            if (handledTools.length > 0 && !request.raw.aborted) {
               try {
                 if (!headerWritten) {
                   reply.raw.writeHead(200, { 'Content-Type': contentType });
@@ -329,7 +352,8 @@ async function startServer() {
                 
                 const isSSE = contentType.includes('text/event-stream');
                 
-                if (fullMessage.content) {
+                if (fullMessage.content && unhandledTools.length === 0) {
+                  // Only send content if we didn't already flush the buffer (which includes the content chunks)
                   const contentChunkObj = isSSE 
                     ? { choices: [{ delta: { role: 'assistant', content: fullMessage.content } }] }
                     : { message: { role: 'assistant', content: fullMessage.content } };
@@ -353,7 +377,7 @@ async function startServer() {
                 }, 10000);
                 
                 try {
-                  await executeToolCalls(fullMessage.tool_calls, toolConfig, (chunk) => {
+                  await executeToolCalls(handledTools, toolConfig, (chunk) => {
                     if (request.raw.aborted) return;
                     const streamChunkObj = isSSE 
                       ? { choices: [{ delta: { content: chunk } }] }
@@ -367,7 +391,7 @@ async function startServer() {
                   clearInterval(heartbeat);
                 }
                 
-                if (!request.raw.aborted) {
+                if (!request.raw.aborted && unhandledTools.length === 0) {
                   const responseObj = { model: request.body?.model, done: true };
                   if (isSSE) responseObj.choices = [{ delta: {}, finish_reason: 'stop' }];
                   
