@@ -160,6 +160,7 @@
         }
         .badge-completed { background: rgba(16, 185, 129, 0.15); color: var(--response); }
         .badge-failed { background: rgba(239, 68, 68, 0.15); color: var(--error); }
+        .badge-canceled { background: rgba(148, 163, 184, 0.15); color: var(--text-muted); }
 
         @keyframes streamingPulse {
             0% { opacity: 0.8; }
@@ -776,7 +777,10 @@
                 badgeClass = 'badge-streaming';
                 badgeText = 'Streaming';
             } else if (isResponse) {
-                if (isError) {
+                if (currentLog.statusCode === 499) {
+                    badgeClass = 'badge-canceled';
+                    badgeText = 'Canceled';
+                } else if (isError) {
                     badgeClass = 'badge-failed';
                     badgeText = 'Failed';
                 } else {

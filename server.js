@@ -169,6 +169,11 @@ async function startServer() {
       host: `${CONFIG.OLLAMA_HOST}:${CONFIG.OLLAMA_PORT}`
     };
 
+    // Remove headers that might interfere with proxying or logging
+    delete proxyHeaders['accept-encoding']; // Force plain text for logging
+    delete proxyHeaders['connection'];
+    delete proxyHeaders['keep-alive'];
+
     if (proxyBodyString) {
       proxyHeaders['content-length'] = requestSize.toString();
     } else {
@@ -184,20 +189,56 @@ async function startServer() {
       headers: proxyHeaders
     };
 
+    let isFinalized = false;
+    let isStreaming = false;
+
+    const finalizeLog = (statusCode, responseBody = '', isStream = false) => {
+      if (isFinalized) return;
+      isFinalized = true;
+      trafficLogger.response({
+        id: request.requestId,
+        method: request.method,
+        path: request.url,
+        statusCode,
+        duration_ms: Date.now() - request.startTime,
+        userAgent: request.userAgent,
+        output_tokens: estimateTokens(responseBody),
+        response_size: Buffer.byteLength(responseBody),
+        response: responseBody,
+        isStream,
+        type: 'response'
+      });
+    };
+
     const proxyReq = http.request(options, (proxyRes) => {
       const contentType = proxyRes.headers['content-type'] || '';
-      const isStream = contentType.includes('text/event-stream') || contentType.includes('application/x-ndjson') || contentType.includes('application/jsonl');
+      isStreaming = contentType.includes('text/event-stream') || contentType.includes('application/x-ndjson') || contentType.includes('application/jsonl');
 
       // Handle streaming responses (Server-Sent Events and NDJSON)
-      if (isStream) {
+      if (isStreaming) {
         let capturedResponse = '';
         let isToolCallStream = false;
         let toolCallBuffer = '';
         let headerWritten = false;
+        let streamingLogged = false;
 
         proxyRes.on('data', (chunk) => {
+          if (request.raw.aborted) return;
+          
           const chunkStr = chunk.toString();
           capturedResponse += chunkStr;
+
+          if (!streamingLogged) {
+            trafficLogger.streaming({
+              id: request.requestId,
+              method: request.method,
+              path: request.url,
+              model,
+              userAgent: request.userAgent,
+              isStream: true
+            });
+            streamingLogged = true;
+          }
           
           // Detect if this stream chunk contains a tool call
           if (chunkStr.includes('"tool_calls"') || isToolCallStream) {
@@ -224,21 +265,16 @@ async function startServer() {
               if (!trimmedLine) continue;
               
               let jsonStr = trimmedLine;
-              let isSSE = false;
               if (trimmedLine.startsWith('data: ')) {
                 jsonStr = trimmedLine.slice(6);
-                isSSE = true;
                 if (jsonStr === '[DONE]') continue;
               }
               
               try {
                 const data = JSON.parse(jsonStr);
-                
-                // Ollama Native and OpenAI structure differences
                 const messageObj = data.message || (data.choices && data.choices[0]?.delta);
                 
                 if (messageObj?.tool_calls) {
-                  // Merge tool calls (some streams send them incrementally)
                   messageObj.tool_calls.forEach(tc => {
                     if (tc.function) {
                       const existingTc = fullMessage.tool_calls.find(t => t.function.name === tc.function.name) || (tc.index !== undefined ? fullMessage.tool_calls[tc.index] : null);
@@ -263,9 +299,8 @@ async function startServer() {
               } catch (e) {}
             }
 
-            if (fullMessage.tool_calls.length > 0) {
+            if (fullMessage.tool_calls.length > 0 && !request.raw.aborted) {
               try {
-                // Stream the markdown back to the client as chunks arrive!
                 if (!headerWritten) {
                   reply.raw.writeHead(200, { 'Content-Type': contentType });
                   headerWritten = true;
@@ -273,7 +308,6 @@ async function startServer() {
                 
                 const isSSE = contentType.includes('text/event-stream');
                 
-                // Write any initial text content
                 if (fullMessage.content) {
                   const contentChunkObj = isSSE 
                     ? { choices: [{ delta: { role: 'assistant', content: fullMessage.content } }] }
@@ -283,8 +317,8 @@ async function startServer() {
                   capturedResponse += fullMessage.content;
                 }
                 
-                // Execute and stream image generation
                 await executeToolCalls(fullMessage.tool_calls, CONFIG, (chunk) => {
+                  if (request.raw.aborted) return;
                   const streamChunkObj = isSSE 
                     ? { choices: [{ delta: { content: chunk } }] }
                     : { message: { content: chunk } };
@@ -293,20 +327,12 @@ async function startServer() {
                   capturedResponse += chunk;
                 });
                 
-                // Format the final done chunk
-                const responseObj = {
-                  model: request.body?.model,
-                  done: true
-                };
-                if (isSSE) {
-                  responseObj.choices = [{ delta: {}, finish_reason: 'stop' }];
-                }
-                
-                const finalChunk = JSON.stringify(responseObj);
-                if (isSSE) {
-                  reply.raw.write(`data: ${finalChunk}\n\n`);
-                } else {
-                  reply.raw.write(`${finalChunk}\n`);
+                if (!request.raw.aborted) {
+                  const responseObj = { model: request.body?.model, done: true };
+                  if (isSSE) responseObj.choices = [{ delta: {}, finish_reason: 'stop' }];
+                  
+                  const finalChunk = JSON.stringify(responseObj);
+                  reply.raw.write(isSSE ? `data: ${finalChunk}\n\n` : `${finalChunk}\n`);
                 }
               } catch (err) {
                 console.error("Tool execution error:", err);
@@ -314,25 +340,12 @@ async function startServer() {
             }
           }
           
-          if (!headerWritten) {
+          finalizeLog(proxyRes.statusCode, capturedResponse, true);
+          
+          if (!headerWritten && !request.raw.aborted) {
             reply.raw.writeHead(proxyRes.statusCode, proxyRes.headers);
           }
           reply.raw.end();
-          
-          // Log completion of the stream
-          trafficLogger.response({
-            id: request.requestId,
-            method: request.method,
-            path: request.url,
-            statusCode: proxyRes.statusCode,
-            duration_ms: Date.now() - request.startTime,
-            userAgent: request.userAgent,
-            output_tokens: estimateTokens(capturedResponse),
-            response_size: Buffer.byteLength(capturedResponse),
-            response: capturedResponse,
-            isStream: true,
-            type: 'response' // Reset to response on completion
-          });
         });
         return;
       }
@@ -343,75 +356,67 @@ async function startServer() {
       proxyRes.on('end', async () => {
         let finalResponseString = responseBody;
         
-        // Intercept Tool Calls for non-streaming
         try {
           const parsedRes = JSON.parse(responseBody);
-          if (parsedRes.message?.tool_calls) {
+          if (parsedRes.message?.tool_calls && !request.raw.aborted) {
             const markdownImage = await executeToolCalls(parsedRes.message.tool_calls, CONFIG);
-            // Append the actual image markdown to any existing conversational text
             parsedRes.message.content = (parsedRes.message.content || '') + markdownImage;
             delete parsedRes.message.tool_calls;
             finalResponseString = JSON.stringify(parsedRes);
           }
         } catch (e) {}
 
-        const duration = Date.now() - request.startTime;
-        // Log final response metadata and token count
         let formattedResponse = finalResponseString;
         try {
-          // Attempt to pretty-print if it's JSON
           formattedResponse = JSON.stringify(JSON.parse(responseBody), null, 2);
         } catch (e) {
-          // If it's not a single JSON, try to format as multiple JSON objects (for SSE/NDJSON)
           try {
             formattedResponse = responseBody.split('\n')
               .map(line => {
                 const trimmed = line.trim();
                 if (!trimmed) return line;
-                // Handle SSE format "data: {...}"
                 const sseMatch = trimmed.match(/^data:\s*(.*)$/);
                 const jsonPart = sseMatch ? sseMatch[1] : trimmed;
                 try {
                   const parsed = JSON.parse(jsonPart);
                   return (sseMatch ? 'data: ' : '') + JSON.stringify(parsed, null, 2);
-                } catch (e2) {
-                  return line;
-                }
+                } catch (e2) { return line; }
               }).join('\n');
-          } catch (e3) {
-            // Fallback to original
-          }
+          } catch (e3) {}
         }
 
-        trafficLogger.response({
-          id: request.requestId,
-          method: request.method,
-          path: request.url,
-          statusCode: proxyRes.statusCode,
-          duration_ms: duration,
-          userAgent: request.userAgent,
-          output_tokens: estimateTokens(responseBody),
-          response_size: Buffer.byteLength(responseBody),
-          response: formattedResponse
-        });
-        reply.status(proxyRes.statusCode).headers(proxyRes.headers).send(finalResponseString);
+        finalizeLog(proxyRes.statusCode, formattedResponse, false);
+        if (!reply.sent) {
+          const resHeaders = { ...proxyRes.headers };
+          delete resHeaders['content-length'];
+          reply.status(proxyRes.statusCode).headers(resHeaders).send(finalResponseString);
+        }
       });
     });
 
     proxyReq.on('error', (err) => {
       trafficLogger.error('Proxy error', err);
-      reply.status(502).send({ error: 'Bad Gateway', message: err.message });
+      const isClientClosed = err.message === 'Client closed connection' || err.code === 'ECONNRESET';
+      const statusCode = isClientClosed ? 499 : 502;
+      finalizeLog(statusCode, JSON.stringify({ error: err.message }), isStreaming);
+
+      if (!reply.sent) {
+        reply.status(statusCode).send({ error: isClientClosed ? 'Client Closed Request' : 'Bad Gateway', message: err.message });
+      }
     });
 
-    request.raw.on('aborted', () => {
-      proxyReq.destroy(new Error('Client closed connection'));
-    });
+    const onAbort = () => {
+      if (!isFinalized) {
+        proxyReq.destroy(new Error('Client closed connection'));
+      }
+    };
+
+    reply.raw.on('close', onAbort);
 
     proxyReq.setTimeout(CONFIG.TIMEOUT, () => {
       proxyReq.destroy(new Error('Upstream timeout'));
     });
 
-    // Write request body if present
     if (proxyBodyString) {
       proxyReq.write(proxyBodyString);
     }
