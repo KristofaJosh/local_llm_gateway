@@ -265,28 +265,41 @@ async function startServer() {
 
             if (fullMessage.tool_calls.length > 0) {
               try {
-                // Execute the tool and get the Markdown image!
-                const markdownImage = await executeToolCalls(fullMessage.tool_calls, CONFIG);
-                
-                // Stream the markdown back to the client as a single chunk
+                // Stream the markdown back to the client as chunks arrive!
                 if (!headerWritten) {
                   reply.raw.writeHead(200, { 'Content-Type': contentType });
                   headerWritten = true;
                 }
                 
-                const finalContent = fullMessage.content + markdownImage;
-                
-                // Format the chunk appropriately based on original content type
                 const isSSE = contentType.includes('text/event-stream');
                 
+                // Write any initial text content
+                if (fullMessage.content) {
+                  const contentChunkObj = isSSE 
+                    ? { choices: [{ delta: { role: 'assistant', content: fullMessage.content } }] }
+                    : { message: { role: 'assistant', content: fullMessage.content } };
+                  const contentChunk = JSON.stringify(contentChunkObj);
+                  reply.raw.write(isSSE ? `data: ${contentChunk}\n\n` : `${contentChunk}\n`);
+                  capturedResponse += fullMessage.content;
+                }
+                
+                // Execute and stream image generation
+                await executeToolCalls(fullMessage.tool_calls, CONFIG, (chunk) => {
+                  const streamChunkObj = isSSE 
+                    ? { choices: [{ delta: { content: chunk } }] }
+                    : { message: { content: chunk } };
+                  const streamChunk = JSON.stringify(streamChunkObj);
+                  reply.raw.write(isSSE ? `data: ${streamChunk}\n\n` : `${streamChunk}\n`);
+                  capturedResponse += chunk;
+                });
+                
+                // Format the final done chunk
                 const responseObj = {
                   model: request.body?.model,
                   done: true
                 };
                 if (isSSE) {
-                  responseObj.choices = [{ delta: { role: 'assistant', content: finalContent } }];
-                } else {
-                  responseObj.message = { role: 'assistant', content: finalContent };
+                  responseObj.choices = [{ delta: {}, finish_reason: 'stop' }];
                 }
                 
                 const finalChunk = JSON.stringify(responseObj);
@@ -295,7 +308,6 @@ async function startServer() {
                 } else {
                   reply.raw.write(`${finalChunk}\n`);
                 }
-                capturedResponse += finalContent; // Update for logging
               } catch (err) {
                 console.error("Tool execution error:", err);
               }
