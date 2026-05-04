@@ -247,10 +247,8 @@ async function startServer() {
       reply.status(502).send({ error: 'Bad Gateway', message: err.message });
     });
 
-    request.raw.on('close', () => {
-      if (!reply.raw.writableEnded) {
-        proxyReq.destroy(new Error('Client closed connection'));
-      }
+    request.raw.on('aborted', () => {
+      proxyReq.destroy(new Error('Client closed connection'));
     });
 
     proxyReq.setTimeout(CONFIG.TIMEOUT, () => {
