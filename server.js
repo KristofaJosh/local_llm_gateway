@@ -313,8 +313,9 @@ async function startServer() {
                     ? { choices: [{ delta: { role: 'assistant', content: fullMessage.content } }] }
                     : { message: { role: 'assistant', content: fullMessage.content } };
                   const contentChunk = JSON.stringify(contentChunkObj);
-                  reply.raw.write(isSSE ? `data: ${contentChunk}\n\n` : `${contentChunk}\n`);
-                  capturedResponse += fullMessage.content;
+                  const chunkStr = isSSE ? `data: ${contentChunk}\n\n` : `${contentChunk}\n`;
+                  reply.raw.write(chunkStr);
+                  capturedResponse += chunkStr;
                 }
                 
                 await executeToolCalls(fullMessage.tool_calls, CONFIG, (chunk) => {
@@ -323,8 +324,9 @@ async function startServer() {
                     ? { choices: [{ delta: { content: chunk } }] }
                     : { message: { content: chunk } };
                   const streamChunk = JSON.stringify(streamChunkObj);
-                  reply.raw.write(isSSE ? `data: ${streamChunk}\n\n` : `${streamChunk}\n`);
-                  capturedResponse += chunk;
+                  const chunkStr = isSSE ? `data: ${streamChunk}\n\n` : `${streamChunk}\n`;
+                  reply.raw.write(chunkStr);
+                  capturedResponse += chunkStr;
                 });
                 
                 if (!request.raw.aborted) {
@@ -368,7 +370,7 @@ async function startServer() {
 
         let formattedResponse = finalResponseString;
         try {
-          formattedResponse = JSON.stringify(JSON.parse(responseBody), null, 2);
+          formattedResponse = JSON.stringify(JSON.parse(finalResponseString), null, 2);
         } catch (e) {
           try {
             formattedResponse = responseBody.split('\n')

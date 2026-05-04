@@ -478,9 +478,7 @@
                     <div class="collapsible-header" onclick="this.parentElement.classList.toggle('collapsed')">
                         <div class="section-title">Response Data</div>
                         <div style="display: flex; gap: 0.5rem; align-items: center;">
-                            {{#if log.isStream}}
-                            <button id="stream-toggle-detail" class="toggle-view-btn" onclick="event.stopPropagation(); toggleStreamMode(this)">Clean View</button>
-                            {{/if}}
+                            <button id="stream-toggle-detail" class="toggle-view-btn" onclick="event.stopPropagation(); toggleCleanMode(this)">Clean View</button>
                             <button class="wrap-toggle" onclick="event.stopPropagation(); toggleWrap(this, 'response-data')">Wrap Text</button>
                             <span class="collapsible-icon">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
@@ -594,7 +592,9 @@
                                    (parsed.choices && parsed.choices[0]?.delta?.content) || 
                                    '';
                         } catch (e) {
-                            return '';
+                            const trimmed = jsonPart.trim();
+                            if (trimmed === '[DONE]') return '';
+                            return trimmed;
                         }
                     })
                     .filter(Boolean)
@@ -606,7 +606,7 @@
 
         let isRawMode = true;
 
-        function toggleStreamMode(btn) {
+        function toggleCleanMode(btn) {
             isRawMode = !isRawMode;
             btn.textContent = isRawMode ? 'Clean View' : 'Raw View';
             
@@ -615,10 +615,21 @@
                 // Raw view: show json shape (formatted raw response)
                 responseData.innerHTML = renderRecursive(log.response, true);
             } else {
-                // Clean view: show final streamed content
-                const cleaned = parseStream(log.response);
+                // Clean view: show final content
+                let cleaned = '';
+                if (log.isStream) {
+                    cleaned = parseStream(log.response);
+                } else {
+                    try {
+                        const parsed = JSON.parse(log.response);
+                        cleaned = parsed.message?.content || parsed.response || log.response;
+                    } catch (e) {
+                        cleaned = log.response;
+                    }
+                }
+
                 if (!cleaned) {
-                    responseData.innerHTML = '<div class="json-tree" style="color: var(--text-muted)">No stream content available</div>';
+                    responseData.innerHTML = '<div class="json-tree" style="color: var(--text-muted)">No content available</div>';
                 } else {
                     marked.setOptions({
                         highlight: function (code, lang) {
