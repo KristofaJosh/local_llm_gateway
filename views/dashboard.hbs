@@ -873,10 +873,41 @@
 
             if (wasExpanded) entry.classList.add('expanded');
 
+            // Helper to format data consistently
+            const formatData = (data) => {
+                if (!data) return 'No data';
+                if (typeof data === 'object') return JSON.stringify(data, null, 2);
+                if (typeof data === 'string') {
+                    try {
+                        return JSON.stringify(JSON.parse(data), null, 2);
+                    } catch(e) {
+                        if (data.includes('\n')) {
+                            const lines = data.split('\n');
+                            let isNDJSON = false;
+                            const formattedLines = lines.map(line => {
+                                const l = line.trim();
+                                if (!l) return '';
+                                const sseMatch = l.match(/^data:\s*(.*)$/);
+                                const jsonPart = sseMatch ? sseMatch[1] : l;
+                                try {
+                                    const parsed = JSON.parse(jsonPart);
+                                    isNDJSON = true;
+                                    return (sseMatch ? 'data: ' : '') + JSON.stringify(parsed, null, 2).replace(/\n/g, '\n  ');
+                                } catch(err) {
+                                    return line;
+                                }
+                            }).filter(Boolean);
+                            if (isNDJSON) return formattedLines.join('\n\n');
+                        }
+                        return data;
+                    }
+                }
+                return data;
+            };
+
             // Render raw data
             const requestContainer = entry.querySelector(`#request-data-${currentLog.id}`);
-            const requestBody = currentLog.body || 'No data';
-            requestContainer.textContent = typeof requestBody === 'object' ? JSON.stringify(requestBody, null, 2) : requestBody;
+            requestContainer.textContent = formatData(currentLog.body);
 
             if (currentLog.response) {
                 const responseContainer = entry.querySelector(`#response-data-${currentLog.id}`);
@@ -884,7 +915,7 @@
                 if (currentLog.isStream && isClean) {
                     responseContainer.textContent = parseStream(currentLog.response);
                 } else {
-                    responseContainer.textContent = typeof currentLog.response === 'object' ? JSON.stringify(currentLog.response, null, 2) : currentLog.response;
+                    responseContainer.textContent = formatData(currentLog.response);
                 }
             }
 
