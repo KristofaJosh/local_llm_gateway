@@ -11,6 +11,7 @@
   "dependencies": {
     "@fastify/view": "^9.1.0",
     "better-sqlite3": "^12.9.0",
+    "cheerio": "^1.2.0",
     "dotenv": "^17.4.2",
     "fastify": "^4.28.1",
     "gpt-tokenizer": "^3.0.1",

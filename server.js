@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import fastify from 'fastify';
+import fs from 'fs/promises';
 import view from '@fastify/view';
 import handlebars from 'handlebars';
 import path from 'path';
@@ -9,8 +10,11 @@ import http from 'http';
 import { v4 as uuidv4 } from 'uuid';
 import trafficLogger from './lib/logger.js';
 import OllamaManager from './lib/ollama.js';
-import { executeToolCalls } from './lib/tools.js';
+import { executeToolCalls, toolDefinitions, availableFunctions } from './lib/tools.js';
 import db from './lib/db.js';
+
+const OLLAMA_API_CHAT = '/api/chat';
+const OPENAI_API_CHAT = '/v1/chat/completions';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -109,32 +113,20 @@ async function startServer() {
     // Inject the generate_image tool into chat requests if IMAGE_MODEL is configured
     const isChatRequest = request.url.includes('/api/chat') || request.url.includes('/v1/chat/completions');
     if (isChatRequest && request.body && typeof request.body === 'object') {
-      if (CONFIG.IMAGE_MODEL) {
-        if (!request.body.tools) {
-          request.body.tools = [];
-        }
-        
-        const hasImageTool = request.body.tools.some(t => t.function?.name === 'generate_image');
-        if (!hasImageTool) {
-          request.body.tools.push({
-            type: "function",
-            function: {
-              name: "generate_image",
-              description: "Use this tool to generate an image whenever the user asks for a picture, drawing, or photograph.",
-              parameters: {
-                type: "object",
-                properties: {
-                  prompt: {
-                    type: "string",
-                    description: "A highly detailed visual description of the image to generate based on the user's request."
-                  }
-                },
-                required: ["prompt"]
-              }
-            }
-          });
-        }
+      if (!request.body.tools) {
+        request.body.tools = [];
       }
+      
+      // Inject all our custom tools
+      toolDefinitions.forEach(tool => {
+        const hasTool = request.body.tools.some(t => t.function?.name === tool.function.name);
+        if (!hasTool) {
+          // If the tool is generate_image, only inject if IMAGE_MODEL is configured
+          if (tool.function.name === 'generate_image' && !CONFIG.IMAGE_MODEL) return;
+          
+          request.body.tools.push(tool);
+        }
+      });
     }
 
     const model = request.body?.model || 'unknown';
@@ -246,14 +238,13 @@ async function startServer() {
           }
           
           // Detect if this stream chunk contains a tool call
-          // We look for the "tool_calls" key in the JSON, not just the string anywhere
-          const containsToolCall = chunkStr.includes('"tool_calls"') && 
-                                   (chunkStr.includes('"message"') || chunkStr.includes('"delta"'));
+          // We trigger tool call mode if we see "tool_calls" anywhere in the chunk
+          const containsToolCall = chunkStr.includes('"tool_calls"');
 
           if (containsToolCall || isToolCallStream) {
             isToolCallStream = true;
             toolCallBuffer += chunkStr;
-            // Do NOT write these chunks to the client yet
+            // Do NOT write these chunks to the client yet as we might need to hide them (for memory tools)
           } else {
             if (!headerWritten) {
               reply.raw.writeHead(proxyRes.statusCode, proxyRes.headers);
@@ -291,25 +282,25 @@ async function startServer() {
                     if (tc.index !== undefined) {
                       existingTc = fullMessage.tool_calls[tc.index];
                       if (!existingTc) {
-                        existingTc = { function: { name: '', arguments: '' } };
+                        existingTc = { id: tc.id || `call_${Math.random().toString(36).substring(2, 9)}`, function: { name: '', arguments: '' } };
                         fullMessage.tool_calls[tc.index] = existingTc;
                       }
                     } else {
                       existingTc = fullMessage.tool_calls.find(t => t.function.name === tc.function?.name);
                     }
 
+                    if (tc.id) existingTc.id = tc.id;
                     if (tc.function) {
-                      if (tc.function.name) existingTc ? existingTc.function.name = tc.function.name : null;
+                      if (tc.function.name) {
+                        if (existingTc) existingTc.function.name = tc.function.name;
+                        else {
+                          existingTc = { id: tc.id || `call_${Math.random().toString(36).substring(2, 9)}`, function: { name: tc.function.name, arguments: '' } };
+                          fullMessage.tool_calls.push(existingTc);
+                        }
+                      }
                       if (tc.function.arguments) {
                         if (existingTc) {
                           existingTc.function.arguments += tc.function.arguments;
-                        } else {
-                          fullMessage.tool_calls.push({
-                            function: {
-                              name: tc.function.name,
-                              arguments: tc.function.arguments
-                            }
-                          });
                         }
                       }
                     }
@@ -326,7 +317,7 @@ async function startServer() {
             // Clean up empty tool call slots if any
             fullMessage.tool_calls = fullMessage.tool_calls.filter(tc => tc && tc.function.name);
 
-            const ourToolNames = ['generate_image'];
+            const ourToolNames = Object.keys(availableFunctions);
             const handledTools = fullMessage.tool_calls.filter(tc => ourToolNames.includes(tc.function.name));
             const unhandledTools = fullMessage.tool_calls.filter(tc => !ourToolNames.includes(tc.function.name));
 
@@ -366,6 +357,7 @@ async function startServer() {
                 // Pass dynamic configuration to tools
                 const toolConfig = {
                   ...CONFIG,
+                  MODEL: model,
                   BASE_URL: process.env.BASE_URL || `${request.protocol}://${request.headers.host}`
                 };
                 
@@ -377,8 +369,15 @@ async function startServer() {
                 }, 10000);
                 
                 try {
+                  // Execute all tools once
+                  const toolResultsMap = new Map();
+                  
                   await executeToolCalls(handledTools, toolConfig, (chunk) => {
                     if (request.raw.aborted) return;
+                    
+                    const isMemoryTool = handledTools.some(tc => ['read_memory', 'update_memory'].includes(tc.function.name));
+                    if (isMemoryTool) return;
+
                     const streamChunkObj = isSSE 
                       ? { choices: [{ delta: { content: chunk } }] }
                       : { message: { content: chunk } };
@@ -387,18 +386,85 @@ async function startServer() {
                     reply.raw.write(chunkStr);
                     capturedResponse += chunkStr;
                   });
-                } finally {
-                  clearInterval(heartbeat);
-                }
-                
-                if (!request.raw.aborted && unhandledTools.length === 0) {
-                  const responseObj = { model: request.body?.model, done: true };
-                  if (isSSE) responseObj.choices = [{ delta: {}, finish_reason: 'stop' }];
+
+                  // If we handled memory tools, we need a follow-up turn to let Claire answer
+                  const memoryTools = handledTools.filter(tc => ['read_memory', 'update_memory'].includes(tc.function.name));
                   
-                  const finalChunk = JSON.stringify(responseObj);
-                  const finalChunkStr = isSSE ? `data: ${finalChunk}\n\n` : `${finalChunk}\n`;
-                  reply.raw.write(finalChunkStr);
-                  capturedResponse += finalChunkStr;
+                  if (memoryTools.length > 0 && !request.raw.aborted) {
+                    // Execute memory tools and capture results
+                    const memoryResults = [];
+                    for (const tc of memoryTools) {
+                        let args = tc.function.arguments;
+                        if (typeof args === 'string') {
+                            try { args = JSON.parse(args); } catch (e) {
+                                console.error(`[TOOLS] Failed to parse arguments for ${tc.function.name}:`, args);
+                            }
+                        }
+                        const result = await availableFunctions[tc.function.name](args, toolConfig);
+                        memoryResults.push({
+                            id: tc.id,
+                            name: tc.function.name,
+                            content: result
+                        });
+                    }
+                    
+                    // Create a follow-up request
+                    const followUpMessages = [...(request.body.messages || [])];
+                    
+                    // Add the assistant's tool call message
+                    followUpMessages.push({
+                        role: 'assistant',
+                        content: fullMessage.content || '',
+                        tool_calls: fullMessage.tool_calls.map(tc => ({
+                            id: tc.id,
+                            type: 'function',
+                            function: tc.function
+                        }))
+                    });
+
+                    // Add the tool results
+                    memoryResults.forEach(res => {
+                        followUpMessages.push({
+                            role: 'tool',
+                            content: res.content,
+                            tool_call_id: res.id
+                        });
+                    });
+
+                    // Call Ollama again for the final response
+                    const followUpBody = {
+                        ...request.body,
+                        messages: followUpMessages,
+                        tools: request.body.tools, // Allow further tool calls (e.g. read then update)
+                        stream: true
+                    };
+
+                    const followUpReq = http.request({
+                        ...options,
+                        method: 'POST',
+                        headers: {
+                            ...proxyHeaders,
+                            'content-length': Buffer.byteLength(JSON.stringify(followUpBody))
+                        }
+                    }, (followUpRes) => {
+                        followUpRes.on('data', (chunk) => {
+                            if (!request.raw.aborted) {
+                                reply.raw.write(chunk);
+                                capturedResponse += chunk.toString();
+                            }
+                        });
+                        followUpRes.on('end', () => {
+                            finalizeLog(followUpRes.statusCode, capturedResponse, true);
+                            reply.raw.end();
+                        });
+                    });
+
+                    followUpReq.write(JSON.stringify(followUpBody));
+                    followUpReq.end();
+                    return; // End the original end handler
+                  }
+                } catch (err) {
+                  console.error("Tool execution error:", err);
                 }
               } catch (err) {
                 console.error("Tool execution error:", err);
@@ -427,6 +493,7 @@ async function startServer() {
           if (parsedRes.message?.tool_calls && !request.raw.aborted) {
             const toolConfig = {
               ...CONFIG,
+              MODEL: model,
               BASE_URL: process.env.BASE_URL || `${request.protocol}://${request.headers.host}`
             };
             const markdownImage = await executeToolCalls(parsedRes.message.tool_calls, toolConfig);
@@ -517,6 +584,30 @@ async function startServer() {
       return reply.send({ success: true });
     } else {
       return reply.status(500).send({ error: 'Failed to clear logs' });
+    }
+  });
+  
+  // Network access for memory.md
+  app.get('/api/memory', async (request, reply) => {
+    try {
+      const memoryPath = path.join(__dirname, 'storage', 'memory.md');
+      const content = await fs.readFile(memoryPath, 'utf8');
+      return reply.send({ content });
+    } catch (err) {
+      return reply.status(404).send({ error: 'Memory file not found' });
+    }
+  });
+
+  app.post('/api/memory', async (request, reply) => {
+    const { content } = request.body;
+    if (!content) return reply.status(400).send({ error: 'Content is required' });
+    
+    try {
+      const memoryPath = path.join(__dirname, 'storage', 'memory.md');
+      await fs.writeFile(memoryPath, content, 'utf8');
+      return reply.send({ success: true });
+    } catch (err) {
+      return reply.status(500).send({ error: 'Failed to update memory' });
     }
   });
 
